@@ -5,13 +5,18 @@ Usage:
     python bot.py              # Run the bot
     python bot.py --dry-run    # Print responses instead of sending
     python bot.py --reset      # Clear all conversation history and exit
+    python bot.py --status     # Output JSON status for dashboard
 """
 
 import argparse
+import json
 import logging
 import signal
+import sqlite3
 import sys
 import time
+from datetime import datetime, timezone
+from pathlib import Path
 
 import config
 from ai import ClaudeAssistant
@@ -45,11 +50,82 @@ def parse_args():
         action="store_true",
         help="Clear all conversation history and exit",
     )
+    parser.add_argument(
+        "--status",
+        action="store_true",
+        help="Output JSON status for dashboard and exit",
+    )
     return parser.parse_args()
+
+
+def get_status() -> dict:
+    """Gather current system status for dashboard consumption."""
+    status = {
+        "project": "InteroperBot",
+        "version": "0.1.0",
+        "status": "active",
+        "uptime_since": None,
+        "last_message_at": None,
+        "messages_today": 0,
+        "threads": [],
+        "todos": [],
+        "council_log": [],
+        "health": {
+            "messages_db": False,
+            "api_key": bool(config.ANTHROPIC_API_KEY),
+            "bot_process": False,
+            "disk_usage_pct": 0,
+        },
+        "activity_log": [],
+        "war_room": {"active": False, "blockers": []},
+        "team": {
+            "lead": "Claude Opus",
+            "engineer": "Claude Sonnet",
+            "hacker": "Claude Haiku",
+            "council_seats": ["Architect", "Critic", "Pragmatist", "Oracle", "Hacker"],
+        },
+    }
+
+    # Check Messages DB access
+    messages_db = Path.home() / "Library" / "Messages" / "chat.db"
+    if messages_db.exists():
+        try:
+            conn = sqlite3.connect(f"file:{messages_db}?mode=ro", uri=True)
+            conn.execute("SELECT MAX(ROWID) FROM message")
+            conn.close()
+            status["health"]["messages_db"] = True
+        except sqlite3.OperationalError:
+            pass
+
+    # Check disk usage
+    try:
+        import shutil
+        usage = shutil.disk_usage("/")
+        status["health"]["disk_usage_pct"] = round(usage.used / usage.total * 100)
+    except OSError:
+        pass
+
+    # Load existing status.json for persistent fields (todos, council_log, etc.)
+    status_path = Path(__file__).parent / "status.json"
+    if status_path.exists():
+        try:
+            existing = json.loads(status_path.read_text())
+            for key in ("todos", "council_log", "activity_log", "war_room", "threads", "team"):
+                if key in existing:
+                    status[key] = existing[key]
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    return status
 
 
 def main():
     args = parse_args()
+
+    if args.status:
+        status = get_status()
+        print(json.dumps(status, indent=2))
+        return
 
     if not config.ANTHROPIC_API_KEY:
         logger.error("ANTHROPIC_API_KEY not set. Create a .env file or export it.")

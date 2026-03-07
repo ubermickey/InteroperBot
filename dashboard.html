@@ -1,0 +1,1244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>InteroperBot Mission Control</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0d1117;
+    --card: #161b22;
+    --card-hover: #1c2129;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-muted: #8b949e;
+    --green: #3fb950;
+    --blue: #58a6ff;
+    --orange: #d29922;
+    --red: #f85149;
+    --purple: #bc8cff;
+    --green-dim: rgba(63, 185, 80, 0.15);
+    --blue-dim: rgba(88, 166, 255, 0.15);
+    --orange-dim: rgba(210, 153, 34, 0.15);
+    --red-dim: rgba(248, 81, 73, 0.15);
+    --purple-dim: rgba(188, 140, 255, 0.15);
+    --radius: 8px;
+    --transition: 0.2s ease;
+  }
+
+  body {
+    font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+  .header {
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    backdrop-filter: blur(12px);
+    background: rgba(22, 27, 34, 0.9);
+  }
+
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .header-title {
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    background: linear-gradient(135deg, var(--blue), var(--green));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .header-version {
+    font-size: 11px;
+    color: var(--text-muted);
+    background: var(--bg);
+    padding: 2px 8px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+  }
+
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  .refresh-indicator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .refresh-ring {
+    width: 24px;
+    height: 24px;
+    position: relative;
+  }
+
+  .refresh-ring svg {
+    width: 24px;
+    height: 24px;
+    transform: rotate(-90deg);
+  }
+
+  .refresh-ring circle {
+    fill: none;
+    stroke-width: 2.5;
+    cx: 12;
+    cy: 12;
+    r: 10;
+  }
+
+  .refresh-ring .track { stroke: var(--border); }
+
+  .refresh-ring .progress {
+    stroke: var(--blue);
+    stroke-dasharray: 62.83;
+    stroke-dashoffset: 0;
+    stroke-linecap: round;
+    transition: stroke-dashoffset 1s linear;
+  }
+
+  .refresh-count {
+    font-variant-numeric: tabular-nums;
+    min-width: 20px;
+    text-align: right;
+  }
+
+  .last-fetch { opacity: 0.6; }
+
+  .main {
+    padding: 24px;
+    max-width: 1440px;
+    margin: 0 auto;
+  }
+
+  .status-bar {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+
+  .status-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    transition: all var(--transition);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .status-card:hover {
+    background: var(--card-hover);
+    border-color: var(--text-muted);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  }
+
+  .status-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+  }
+
+  .status-card.green::before { background: var(--green); }
+  .status-card.blue::before { background: var(--blue); }
+  .status-card.orange::before { background: var(--orange); }
+  .status-card.red::before { background: var(--red); }
+
+  .status-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+  }
+
+  .status-value {
+    font-size: 22px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .pulse-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  .pulse-dot::after {
+    content: '';
+    position: absolute;
+    inset: -3px;
+    border-radius: 50%;
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  .pulse-dot.green { background: var(--green); }
+  .pulse-dot.green::after { border: 2px solid var(--green); }
+  .pulse-dot.red { background: var(--red); }
+  .pulse-dot.red::after { border: 2px solid var(--red); }
+  .pulse-dot.yellow { background: var(--orange); }
+  .pulse-dot.yellow::after { border: 2px solid var(--orange); }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0; transform: scale(1.8); }
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+  }
+
+  @media (max-width: 1200px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 768px) {
+    .grid { grid-template-columns: 1fr; }
+    .status-bar { grid-template-columns: repeat(2, 1fr); }
+    .header { padding: 12px 16px; flex-wrap: wrap; gap: 8px; }
+    .main { padding: 16px; }
+  }
+
+  .panel {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    transition: all var(--transition);
+  }
+
+  .panel:hover {
+    border-color: var(--text-muted);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+  }
+
+  .panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .panel-header .icon { font-size: 14px; margin-right: 8px; }
+
+  .panel-badge {
+    font-size: 10px; font-weight: 500;
+    padding: 2px 8px; border-radius: 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+  }
+
+  .panel-body {
+    padding: 14px 18px;
+    max-height: 340px;
+    overflow-y: auto;
+  }
+
+  .thread-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    border-radius: 6px;
+    margin-bottom: 6px;
+    transition: background var(--transition);
+    border: 1px solid transparent;
+  }
+
+  .thread-item:hover { background: var(--bg); border-color: var(--border); }
+
+  .thread-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+
+  .thread-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .thread-dot.active { background: var(--green); }
+  .thread-dot.today { background: var(--orange); }
+  .thread-dot.old { background: var(--text-muted); opacity: 0.4; }
+
+  .thread-contact {
+    font-size: 13px; font-weight: 500;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  .thread-right {
+    display: flex; align-items: center; gap: 12px;
+    flex-shrink: 0; font-size: 11px; color: var(--text-muted);
+  }
+
+  .thread-count {
+    background: var(--bg);
+    padding: 2px 8px; border-radius: 10px;
+    border: 1px solid var(--border);
+    font-size: 10px; font-variant-numeric: tabular-nums;
+  }
+
+  .kanban { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .kanban-col { min-width: 0; }
+
+  .kanban-col-header {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
+    color: var(--text-muted);
+    padding: 0 4px 8px;
+    border-bottom: 2px solid var(--border);
+    margin-bottom: 8px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+
+  .kanban-col-header .count { font-variant-numeric: tabular-nums; }
+  .kanban-col[data-col="backlog"] .kanban-col-header { border-bottom-color: var(--text-muted); }
+  .kanban-col[data-col="in_progress"] .kanban-col-header { border-bottom-color: var(--blue); }
+  .kanban-col[data-col="done"] .kanban-col-header { border-bottom-color: var(--green); }
+
+  .kanban-card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    font-size: 11px;
+    transition: all var(--transition);
+    cursor: default;
+  }
+
+  .kanban-card:hover {
+    border-color: var(--text-muted);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  }
+
+  .kanban-card-title { font-weight: 500; margin-bottom: 6px; line-height: 1.3; word-break: break-word; }
+
+  .kanban-card-meta {
+    display: flex; align-items: center;
+    justify-content: space-between; gap: 4px; flex-wrap: wrap;
+  }
+
+  .kanban-assignee { color: var(--text-muted); font-size: 10px; }
+
+  .priority-badge {
+    font-size: 9px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    padding: 1px 6px; border-radius: 4px;
+  }
+
+  .priority-badge.high { background: var(--red-dim); color: var(--red); }
+  .priority-badge.medium { background: var(--orange-dim); color: var(--orange); }
+  .priority-badge.low { background: var(--green-dim); color: var(--green); }
+
+  .council-entry {
+    padding: 10px 12px; border-radius: 6px;
+    margin-bottom: 6px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    font-size: 12px;
+    transition: all var(--transition);
+  }
+
+  .council-entry:hover { border-color: var(--text-muted); }
+
+  .council-timestamp {
+    font-size: 10px; color: var(--text-muted);
+    margin-bottom: 4px; font-variant-numeric: tabular-nums;
+  }
+
+  .council-decision { font-weight: 500; margin-bottom: 6px; line-height: 1.4; }
+
+  .council-meta { display: flex; align-items: center; gap: 12px; font-size: 10px; }
+  .council-votes { display: flex; gap: 8px; }
+
+  .vote-chip {
+    display: flex; align-items: center; gap: 3px;
+    padding: 1px 6px; border-radius: 4px;
+  }
+
+  .vote-chip.for { background: var(--green-dim); color: var(--green); }
+  .vote-chip.against { background: var(--red-dim); color: var(--red); }
+  .vote-chip.abstain { background: rgba(139, 148, 158, 0.15); color: var(--text-muted); }
+
+  .council-outcome {
+    padding: 1px 8px; border-radius: 4px;
+    font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+  }
+
+  .council-outcome.approved { background: var(--green-dim); color: var(--green); }
+  .council-outcome.rejected { background: var(--red-dim); color: var(--red); }
+
+  .health-item {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 13px;
+  }
+
+  .health-item:last-child { border-bottom: none; }
+  .health-left { display: flex; align-items: center; gap: 10px; }
+
+  .health-icon {
+    width: 28px; height: 28px; border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; flex-shrink: 0;
+  }
+
+  .health-icon.ok { background: var(--green-dim); color: var(--green); }
+  .health-icon.fail { background: var(--red-dim); color: var(--red); }
+  .health-icon.warn { background: var(--orange-dim); color: var(--orange); }
+  .health-label { font-weight: 500; }
+
+  .health-status {
+    font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+
+  .health-status.ok { color: var(--green); }
+  .health-status.fail { color: var(--red); }
+
+  .disk-bar-container { width: 120px; display: flex; align-items: center; gap: 8px; }
+
+  .disk-bar {
+    flex: 1; height: 6px;
+    background: var(--bg); border-radius: 3px; overflow: hidden;
+  }
+
+  .disk-bar-fill {
+    height: 100%; border-radius: 3px;
+    transition: width 0.5s ease, background 0.3s ease;
+  }
+
+  .disk-pct {
+    font-size: 11px; font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    min-width: 32px; text-align: right;
+  }
+
+  .activity-entry {
+    display: flex; gap: 10px; padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px; align-items: flex-start;
+  }
+
+  .activity-entry:last-child { border-bottom: none; }
+
+  .activity-time {
+    font-size: 10px; color: var(--text-muted);
+    flex-shrink: 0; min-width: 56px; padding-top: 2px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .activity-agent {
+    font-size: 10px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    padding: 1px 8px; border-radius: 4px; flex-shrink: 0;
+  }
+
+  .activity-agent.opus { background: var(--purple-dim); color: var(--purple); }
+  .activity-agent.sonnet { background: var(--blue-dim); color: var(--blue); }
+  .activity-agent.haiku { background: var(--green-dim); color: var(--green); }
+
+  .activity-action {
+    color: var(--text); line-height: 1.4;
+    flex: 1; min-width: 0; word-break: break-word;
+  }
+
+  .war-room { grid-column: 1 / -1; }
+
+  .war-room-toggle {
+    width: 100%;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 13px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    padding: 14px 18px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: space-between;
+    transition: all var(--transition);
+  }
+
+  .war-room-toggle:hover { background: var(--card-hover); border-color: var(--text-muted); }
+  .war-room-toggle.active-issues { border-color: var(--red); background: var(--red-dim); }
+  .war-room-toggle .left { display: flex; align-items: center; gap: 10px; }
+
+  .war-room-toggle .chevron {
+    transition: transform 0.3s ease;
+    font-size: 16px; color: var(--text-muted);
+  }
+
+  .war-room-toggle.expanded .chevron { transform: rotate(180deg); }
+
+  .war-room-content {
+    max-height: 0; overflow: hidden;
+    transition: max-height 0.4s ease, padding 0.3s ease;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-top: none;
+    border-radius: 0 0 var(--radius) var(--radius);
+    margin-top: -1px;
+  }
+
+  .war-room-content.open { max-height: 400px; padding: 14px 18px; }
+  .war-room-content.active-issues { border-color: var(--red); }
+
+  .blocker-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 8px; font-size: 12px;
+  }
+
+  .blocker-item:last-child { margin-bottom: 0; }
+
+  .blocker-status-icon {
+    width: 20px; height: 20px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; flex-shrink: 0;
+  }
+
+  .blocker-status-icon.blocking { background: var(--red-dim); color: var(--red); }
+  .blocker-status-icon.resolved { background: var(--green-dim); color: var(--green); }
+  .blocker-text { flex: 1; }
+
+  .blocker-status-label {
+    font-size: 10px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.5px; flex-shrink: 0;
+  }
+
+  .blocker-status-label.blocking { color: var(--red); }
+  .blocker-status-label.resolved { color: var(--green); }
+
+  .empty-state {
+    text-align: center; padding: 24px 16px;
+    color: var(--text-muted); font-size: 12px;
+  }
+
+  .empty-state .icon { font-size: 24px; margin-bottom: 8px; opacity: 0.4; }
+  .all-clear { color: var(--green); font-weight: 500; }
+
+  .team-footer {
+    margin-top: 24px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 18px;
+    display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; gap: 12px;
+    font-size: 11px; color: var(--text-muted);
+  }
+
+  .team-members { display: flex; gap: 16px; flex-wrap: wrap; }
+  .team-member { display: flex; align-items: center; gap: 6px; }
+  .team-role { text-transform: uppercase; letter-spacing: 0.5px; font-size: 9px; font-weight: 600; }
+  .team-name { color: var(--text); font-weight: 500; }
+  .council-seats { display: flex; gap: 6px; flex-wrap: wrap; }
+
+  .seat-chip {
+    padding: 2px 8px; border-radius: 4px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    font-size: 10px;
+  }
+
+  .error-banner {
+    background: var(--red-dim);
+    border: 1px solid var(--red);
+    border-radius: var(--radius);
+    padding: 10px 18px;
+    margin-bottom: 16px;
+    font-size: 12px; color: var(--red);
+    display: none; align-items: center; gap: 8px;
+  }
+
+  .error-banner.visible { display: flex; }
+</style>
+</head>
+<body>
+
+<header class="header">
+  <div class="header-left">
+    <span class="header-title">InteroperBot Mission Control</span>
+    <span class="header-version" id="version">v0.0.0</span>
+  </div>
+  <div class="header-right">
+    <span class="last-fetch" id="lastFetch">Fetching...</span>
+    <div class="refresh-indicator">
+      <div class="refresh-ring">
+        <svg viewBox="0 0 24 24">
+          <circle class="track" />
+          <circle class="progress" id="refreshProgress" />
+        </svg>
+      </div>
+      <span class="refresh-count" id="refreshCount">30</span>
+    </div>
+  </div>
+</header>
+
+<main class="main">
+  <div class="error-banner" id="errorBanner">
+    <span>!</span>
+    <span id="errorMessage">Failed to load status.json</span>
+  </div>
+
+  <div class="status-bar" id="statusBar">
+    <div class="status-card green" id="botCard">
+      <div class="status-label">Bot Status</div>
+      <div class="status-value">
+        <span class="pulse-dot green" id="botDot"></span>
+        <span id="botStatus">--</span>
+      </div>
+    </div>
+    <div class="status-card blue">
+      <div class="status-label">Uptime</div>
+      <div class="status-value" id="uptime">--</div>
+    </div>
+    <div class="status-card orange">
+      <div class="status-label">Last Message</div>
+      <div class="status-value" id="lastMessage" style="font-size:14px;">--</div>
+    </div>
+    <div class="status-card blue">
+      <div class="status-label">Messages Today</div>
+      <div class="status-value" id="messagesToday">0</div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="panel">
+      <div class="panel-header">
+        <span><span class="icon">&#9673;</span> Active Threads</span>
+        <span class="panel-badge" id="threadsCount">0</span>
+      </div>
+      <div class="panel-body" id="threadsList"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">
+        <span><span class="icon">&#9745;</span> TODO Tracker</span>
+        <span class="panel-badge" id="todosCount">0</span>
+      </div>
+      <div class="panel-body" style="max-height: 380px;">
+        <div class="kanban" id="kanban">
+          <div class="kanban-col" data-col="backlog">
+            <div class="kanban-col-header">
+              <span>Backlog</span>
+              <span class="count" id="backlogCount">0</span>
+            </div>
+            <div id="backlogItems"></div>
+          </div>
+          <div class="kanban-col" data-col="in_progress">
+            <div class="kanban-col-header">
+              <span>In Progress</span>
+              <span class="count" id="inProgressCount">0</span>
+            </div>
+            <div id="inProgressItems"></div>
+          </div>
+          <div class="kanban-col" data-col="done">
+            <div class="kanban-col-header">
+              <span>Done</span>
+              <span class="count" id="doneCount">0</span>
+            </div>
+            <div id="doneItems"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">
+        <span><span class="icon">&#9878;</span> Council Log</span>
+        <span class="panel-badge" id="councilCount">0</span>
+      </div>
+      <div class="panel-body" id="councilLog"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">
+        <span><span class="icon">&#9829;</span> Health Monitors</span>
+      </div>
+      <div class="panel-body" id="healthPanel">
+        <div class="health-item">
+          <div class="health-left">
+            <div class="health-icon fail" id="healthDbIcon">&#10005;</div>
+            <span class="health-label">Messages DB</span>
+          </div>
+          <span class="health-status fail" id="healthDbStatus">UNKNOWN</span>
+        </div>
+        <div class="health-item">
+          <div class="health-left">
+            <div class="health-icon fail" id="healthApiIcon">&#10005;</div>
+            <span class="health-label">API Key</span>
+          </div>
+          <span class="health-status fail" id="healthApiStatus">UNKNOWN</span>
+        </div>
+        <div class="health-item">
+          <div class="health-left">
+            <div class="health-icon fail" id="healthBotIcon">&#10005;</div>
+            <span class="health-label">Bot Process</span>
+          </div>
+          <span class="health-status fail" id="healthBotStatus">UNKNOWN</span>
+        </div>
+        <div class="health-item">
+          <div class="health-left">
+            <div class="health-icon ok" id="healthDiskIcon">&#9673;</div>
+            <span class="health-label">Disk Space</span>
+          </div>
+          <div class="disk-bar-container">
+            <div class="disk-bar">
+              <div class="disk-bar-fill" id="diskBarFill" style="width: 0%; background: var(--green);"></div>
+            </div>
+            <span class="disk-pct" id="diskPct">--%</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">
+        <span><span class="icon">&#9998;</span> Team Activity</span>
+        <span class="panel-badge" id="activityCount">0</span>
+      </div>
+      <div class="panel-body" id="activityLog"></div>
+    </div>
+
+    <div></div>
+
+    <div class="war-room">
+      <button class="war-room-toggle" id="warRoomToggle">
+        <span class="left">
+          <span class="icon">&#9888;</span>
+          <span>War Room</span>
+          <span class="panel-badge" id="blockerCount">0 blockers</span>
+        </span>
+        <span class="chevron">&#9660;</span>
+      </button>
+      <div class="war-room-content" id="warRoomContent">
+        <div id="warRoomBody"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="team-footer" id="teamFooter">
+    <div class="team-members" id="teamMembers"></div>
+    <div class="council-seats" id="councilSeats"></div>
+  </div>
+</main>
+
+<script>
+(function() {
+  'use strict';
+
+  var REFRESH_INTERVAL = 30;
+  var CIRCUMFERENCE = 2 * Math.PI * 10;
+  var countdown = REFRESH_INTERVAL;
+  var data = null;
+  var warRoomOpen = false;
+
+  function $(id) { return document.getElementById(id); }
+
+  function safeGet(obj, path, fallback) {
+    try {
+      var keys = path.split('.');
+      var val = obj;
+      for (var i = 0; i < keys.length; i++) { val = val[keys[i]]; }
+      return val !== undefined && val !== null ? val : fallback;
+    } catch (e) { return fallback; }
+  }
+
+  function escapeHtml(str) {
+    var div = document.createElement('div');
+    div.textContent = String(str);
+    return div.innerHTML;
+  }
+
+  function formatTimestamp(ts) {
+    if (!ts) return '--';
+    try {
+      var d = new Date(ts);
+      if (isNaN(d.getTime())) return '--';
+      return d.toLocaleString('en-US', {
+        month: 'short', day: 'numeric',
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+      });
+    } catch (e) { return '--'; }
+  }
+
+  function formatTimeShort(ts) {
+    if (!ts) return '--:--';
+    try {
+      var d = new Date(ts);
+      if (isNaN(d.getTime())) return '--:--';
+      return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+    } catch (e) { return '--:--'; }
+  }
+
+  function formatUptime(since) {
+    if (!since) return '--';
+    try {
+      var start = new Date(since);
+      if (isNaN(start.getTime())) return '--';
+      var diff = Math.max(0, Math.floor((new Date() - start) / 1000));
+      var days = Math.floor(diff / 86400);
+      var hours = Math.floor((diff % 86400) / 3600);
+      var minutes = Math.floor((diff % 3600) / 60);
+      var seconds = diff % 60;
+      var parts = [];
+      if (days > 0) parts.push(days + 'd');
+      if (hours > 0 || days > 0) parts.push(hours + 'h');
+      parts.push(minutes + 'm');
+      if (days === 0) parts.push(seconds + 's');
+      return parts.join(' ');
+    } catch (e) { return '--'; }
+  }
+
+  function threadRecency(lastActivity) {
+    if (!lastActivity) return 'old';
+    try {
+      var d = new Date(lastActivity);
+      if (isNaN(d.getTime())) return 'old';
+      var now = new Date();
+      if (now - d < 3600000) return 'active';
+      var todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      if (d >= todayStart) return 'today';
+      return 'old';
+    } catch (e) { return 'old'; }
+  }
+
+  // -- DOM builders (safe, no innerHTML with user data) --
+
+  function clearChildren(el) {
+    while (el.firstChild) el.removeChild(el.firstChild);
+  }
+
+  function el(tag, attrs, children) {
+    var node = document.createElement(tag);
+    if (attrs) {
+      Object.keys(attrs).forEach(function(k) {
+        if (k === 'className') node.className = attrs[k];
+        else if (k === 'textContent') node.textContent = attrs[k];
+        else if (k === 'style' && typeof attrs[k] === 'object') {
+          Object.keys(attrs[k]).forEach(function(s) { node.style[s] = attrs[k][s]; });
+        } else node.setAttribute(k, attrs[k]);
+      });
+    }
+    if (children) {
+      (Array.isArray(children) ? children : [children]).forEach(function(c) {
+        if (typeof c === 'string') node.appendChild(document.createTextNode(c));
+        else if (c) node.appendChild(c);
+      });
+    }
+    return node;
+  }
+
+  function makeEmptyState(iconChar, message) {
+    return el('div', { className: 'empty-state' }, [
+      el('div', { className: 'icon', textContent: iconChar }),
+      el('div', { textContent: message })
+    ]);
+  }
+
+  // -- Render Functions --
+
+  function renderStatusBar() {
+    var status = safeGet(data, 'status', 'unknown');
+    var dotEl = $('botDot');
+    var statusEl = $('botStatus');
+    var card = $('botCard');
+
+    dotEl.className = 'pulse-dot';
+    card.className = 'status-card';
+
+    if (status === 'active' || status === 'running') {
+      dotEl.classList.add('green');
+      card.classList.add('green');
+      statusEl.textContent = 'Running';
+    } else if (status === 'degraded') {
+      dotEl.classList.add('yellow');
+      card.classList.add('orange');
+      statusEl.textContent = 'Degraded';
+    } else {
+      dotEl.classList.add('red');
+      card.classList.add('red');
+      statusEl.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+    }
+
+    $('uptime').textContent = formatUptime(safeGet(data, 'uptime_since', null));
+    var lastMsg = safeGet(data, 'last_message_at', null);
+    $('lastMessage').textContent = lastMsg ? formatTimestamp(lastMsg) : 'No messages yet';
+    $('messagesToday').textContent = safeGet(data, 'messages_today', 0);
+    $('version').textContent = 'v' + safeGet(data, 'version', '0.0.0');
+  }
+
+  function renderThreads() {
+    var threads = safeGet(data, 'threads', []);
+    $('threadsCount').textContent = threads.length;
+    var container = $('threadsList');
+    clearChildren(container);
+
+    if (threads.length === 0) {
+      container.appendChild(makeEmptyState('\u25C9', 'No active threads'));
+      return;
+    }
+
+    var sorted = threads.slice().sort(function(a, b) {
+      return new Date(b.last_activity || 0) - new Date(a.last_activity || 0);
+    });
+
+    sorted.forEach(function(t) {
+      var recency = threadRecency(t.last_activity);
+      var item = el('div', { className: 'thread-item' }, [
+        el('div', { className: 'thread-left' }, [
+          el('span', { className: 'thread-dot ' + recency }),
+          el('span', { className: 'thread-contact', textContent: t.contact || t.identifier || 'Unknown' })
+        ]),
+        el('div', { className: 'thread-right' }, [
+          el('span', { className: 'thread-count', textContent: (t.message_count || 0) + ' msgs' }),
+          el('span', { textContent: formatTimeShort(t.last_activity) })
+        ])
+      ]);
+      container.appendChild(item);
+    });
+  }
+
+  function renderTodoCards(items, container) {
+    clearChildren(container);
+    if (items.length === 0) {
+      container.appendChild(el('div', {
+        className: '',
+        style: { fontSize: '10px', color: 'var(--text-muted)', textAlign: 'center', padding: '8px' },
+        textContent: 'Empty'
+      }));
+      return;
+    }
+    items.forEach(function(t) {
+      var card = el('div', { className: 'kanban-card' }, [
+        el('div', { className: 'kanban-card-title', textContent: t.title || 'Untitled' }),
+        el('div', { className: 'kanban-card-meta' }, [
+          el('span', { className: 'kanban-assignee', textContent: t.assignee || '--' }),
+          el('span', { className: 'priority-badge ' + (t.priority || 'low'), textContent: (t.priority || 'low').toUpperCase() })
+        ])
+      ]);
+      container.appendChild(card);
+    });
+  }
+
+  function renderTodos() {
+    var todos = safeGet(data, 'todos', []);
+    $('todosCount').textContent = todos.length;
+
+    var backlog = todos.filter(function(t) { return t.status === 'backlog'; });
+    var inProgress = todos.filter(function(t) { return t.status === 'in_progress'; });
+    var done = todos.filter(function(t) { return t.status === 'done'; });
+
+    $('backlogCount').textContent = backlog.length;
+    $('inProgressCount').textContent = inProgress.length;
+    $('doneCount').textContent = done.length;
+
+    renderTodoCards(backlog, $('backlogItems'));
+    renderTodoCards(inProgress, $('inProgressItems'));
+    renderTodoCards(done, $('doneItems'));
+  }
+
+  function renderCouncilLog() {
+    var logs = safeGet(data, 'council_log', []);
+    $('councilCount').textContent = logs.length;
+    var container = $('councilLog');
+    clearChildren(container);
+
+    if (logs.length === 0) {
+      container.appendChild(makeEmptyState('\u2696', 'No council decisions recorded'));
+      return;
+    }
+
+    var sorted = logs.slice().reverse();
+    sorted.forEach(function(entry) {
+      var votes = entry.votes || {};
+      var outcome = (entry.outcome || 'unknown').toLowerCase();
+      var node = el('div', { className: 'council-entry' }, [
+        el('div', { className: 'council-timestamp', textContent: formatTimestamp(entry.timestamp) }),
+        el('div', { className: 'council-decision', textContent: entry.decision || '--' }),
+        el('div', { className: 'council-meta' }, [
+          el('div', { className: 'council-votes' }, [
+            el('span', { className: 'vote-chip for', textContent: '+' + (votes.for || 0) }),
+            el('span', { className: 'vote-chip against', textContent: '-' + (votes.against || 0) }),
+            el('span', { className: 'vote-chip abstain', textContent: '~' + (votes.abstain || 0) })
+          ]),
+          el('span', { className: 'council-outcome ' + outcome, textContent: (entry.outcome || 'UNKNOWN').toUpperCase() })
+        ])
+      ]);
+      container.appendChild(node);
+    });
+  }
+
+  function setHealthIndicator(iconId, statusId, value) {
+    var icon = $(iconId);
+    var status = $(statusId);
+    if (value === true) {
+      icon.className = 'health-icon ok';
+      icon.textContent = '\u2713';
+      status.className = 'health-status ok';
+      status.textContent = 'OK';
+    } else {
+      icon.className = 'health-icon fail';
+      icon.textContent = '\u2717';
+      status.className = 'health-status fail';
+      status.textContent = 'FAIL';
+    }
+  }
+
+  function renderHealth() {
+    var health = safeGet(data, 'health', {});
+    setHealthIndicator('healthDbIcon', 'healthDbStatus', safeGet(health, 'messages_db', false));
+    setHealthIndicator('healthApiIcon', 'healthApiStatus', safeGet(health, 'api_key', false));
+    setHealthIndicator('healthBotIcon', 'healthBotStatus', safeGet(health, 'bot_process', false));
+
+    var diskPct = safeGet(health, 'disk_usage_pct', 0);
+    var diskFill = $('diskBarFill');
+    var diskLabel = $('diskPct');
+    var diskIcon = $('healthDiskIcon');
+
+    diskFill.style.width = Math.min(100, Math.max(0, diskPct)) + '%';
+    diskLabel.textContent = diskPct + '%';
+
+    if (diskPct > 90) {
+      diskFill.style.background = 'var(--red)';
+      diskLabel.style.color = 'var(--red)';
+      diskIcon.className = 'health-icon fail';
+    } else if (diskPct > 75) {
+      diskFill.style.background = 'var(--orange)';
+      diskLabel.style.color = 'var(--orange)';
+      diskIcon.className = 'health-icon warn';
+    } else {
+      diskFill.style.background = 'var(--green)';
+      diskLabel.style.color = 'var(--green)';
+      diskIcon.className = 'health-icon ok';
+    }
+    diskIcon.textContent = '\u25C9';
+  }
+
+  function renderActivityLog() {
+    var logs = safeGet(data, 'activity_log', []);
+    $('activityCount').textContent = logs.length;
+    var container = $('activityLog');
+    clearChildren(container);
+
+    if (logs.length === 0) {
+      container.appendChild(makeEmptyState('\u270E', 'No recent activity'));
+      return;
+    }
+
+    var sorted = logs.slice().reverse();
+    sorted.forEach(function(entry) {
+      var agent = (entry.agent || 'Unknown').toLowerCase();
+      var agentClass = agent === 'opus' ? 'opus' : agent === 'sonnet' ? 'sonnet' : agent === 'haiku' ? 'haiku' : '';
+      var node = el('div', { className: 'activity-entry' }, [
+        el('span', { className: 'activity-time', textContent: formatTimeShort(entry.timestamp) }),
+        el('span', { className: 'activity-agent ' + agentClass, textContent: entry.agent || '??' }),
+        el('span', { className: 'activity-action', textContent: entry.action || '--' })
+      ]);
+      container.appendChild(node);
+    });
+  }
+
+  function renderWarRoom() {
+    var warRoom = safeGet(data, 'war_room', { active: false, blockers: [] });
+    var blockers = warRoom.blockers || [];
+    var isActive = warRoom.active || blockers.length > 0;
+    var toggle = $('warRoomToggle');
+    var content = $('warRoomContent');
+    var body = $('warRoomBody');
+
+    $('blockerCount').textContent = blockers.length + ' blocker' + (blockers.length !== 1 ? 's' : '');
+
+    if (isActive) {
+      toggle.classList.add('active-issues');
+      content.classList.add('active-issues');
+    } else {
+      toggle.classList.remove('active-issues');
+      content.classList.remove('active-issues');
+    }
+
+    clearChildren(body);
+
+    if (blockers.length === 0) {
+      var clearMsg = el('div', { className: 'empty-state all-clear', textContent: 'All clear -- no active blockers' });
+      body.appendChild(clearMsg);
+      return;
+    }
+
+    blockers.forEach(function(b) {
+      var status = (b.status || 'blocking').toLowerCase();
+      var isResolved = status === 'resolved';
+      var node = el('div', { className: 'blocker-item' }, [
+        el('div', {
+          className: 'blocker-status-icon ' + (isResolved ? 'resolved' : 'blocking'),
+          textContent: isResolved ? '\u2713' : '!'
+        }),
+        el('span', { className: 'blocker-text', textContent: b.description || b.title || '--' }),
+        el('span', {
+          className: 'blocker-status-label ' + (isResolved ? 'resolved' : 'blocking'),
+          textContent: status.toUpperCase()
+        })
+      ]);
+      body.appendChild(node);
+    });
+  }
+
+  function renderTeam() {
+    var team = safeGet(data, 'team', {});
+    var membersContainer = $('teamMembers');
+    var seatsContainer = $('councilSeats');
+    clearChildren(membersContainer);
+    clearChildren(seatsContainer);
+
+    var members = [];
+    if (team.lead) members.push({ role: 'Lead', name: team.lead });
+    if (team.engineer) members.push({ role: 'Engineer', name: team.engineer });
+    if (team.hacker) members.push({ role: 'Hacker', name: team.hacker });
+
+    if (members.length === 0) {
+      membersContainer.appendChild(el('span', { className: 'team-member' }, [
+        el('span', { className: 'team-role', textContent: 'No team data' })
+      ]));
+    } else {
+      members.forEach(function(m) {
+        membersContainer.appendChild(el('span', { className: 'team-member' }, [
+          el('span', { className: 'team-role', textContent: m.role + ':' }),
+          el('span', { className: 'team-name', textContent: m.name })
+        ]));
+      });
+    }
+
+    var seats = team.council_seats || [];
+    seats.forEach(function(s) {
+      seatsContainer.appendChild(el('span', { className: 'seat-chip', textContent: s }));
+    });
+  }
+
+  // -- Render all --
+  function render() {
+    if (!data) return;
+    renderStatusBar();
+    renderThreads();
+    renderTodos();
+    renderCouncilLog();
+    renderHealth();
+    renderActivityLog();
+    renderWarRoom();
+    renderTeam();
+  }
+
+  // -- War Room Toggle --
+  $('warRoomToggle').addEventListener('click', function() {
+    warRoomOpen = !warRoomOpen;
+    var toggle = $('warRoomToggle');
+    var content = $('warRoomContent');
+    if (warRoomOpen) {
+      toggle.classList.add('expanded');
+      content.classList.add('open');
+    } else {
+      toggle.classList.remove('expanded');
+      content.classList.remove('open');
+    }
+  });
+
+  // -- Fetch --
+  function fetchStatus() {
+    fetch('status.json?_=' + Date.now())
+      .then(function(resp) {
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        return resp.json();
+      })
+      .then(function(json) {
+        data = json;
+        $('errorBanner').classList.remove('visible');
+        $('lastFetch').textContent = 'Updated ' + new Date().toLocaleTimeString('en-US', {
+          hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+        });
+        render();
+      })
+      .catch(function(err) {
+        $('errorBanner').classList.add('visible');
+        $('errorMessage').textContent = 'Failed to load status.json: ' + err.message;
+        if (!data) {
+          data = {
+            project: 'InteroperBot', version: '0.0.0', status: 'unknown',
+            uptime_since: null, last_message_at: null, messages_today: 0,
+            threads: [], todos: [], council_log: [],
+            health: { messages_db: false, api_key: false, bot_process: false, disk_usage_pct: 0 },
+            activity_log: [], war_room: { active: false, blockers: [] }, team: {}
+          };
+          render();
+        }
+      });
+  }
+
+  // -- Countdown --
+  function updateCountdown() {
+    countdown--;
+    if (countdown <= 0) {
+      countdown = REFRESH_INTERVAL;
+      fetchStatus();
+    }
+    $('refreshCount').textContent = countdown;
+    var offset = CIRCUMFERENCE * (countdown / REFRESH_INTERVAL);
+    $('refreshProgress').style.strokeDashoffset = CIRCUMFERENCE - offset;
+  }
+
+  function tickUptime() {
+    if (data && data.uptime_since) {
+      $('uptime').textContent = formatUptime(data.uptime_since);
+    }
+  }
+
+  // -- Init --
+  $('refreshProgress').style.strokeDasharray = CIRCUMFERENCE;
+  $('refreshProgress').style.strokeDashoffset = 0;
+
+  fetchStatus();
+  setInterval(updateCountdown, 1000);
+  setInterval(tickUptime, 1000);
+
+})();
+</script>
+</body>
+</html>
