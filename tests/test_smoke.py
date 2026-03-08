@@ -127,6 +127,36 @@ def test_store_session_id_roundtrip(tmp_path):
     s.set_metadata(cid, "cli_session_id", "new-session-456")
     assert s.get_metadata(cid, "cli_session_id") == "new-session-456"
 
+def test_pending_delivery_lifecycle(tmp_path):
+    """Pending deliveries can be created, queried, updated, and cleared."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from store import SQLiteStore
+
+    db = str(tmp_path / "test.db")
+    s = SQLiteStore(db_path=db)
+
+    # Add a pending delivery
+    did = s.add_pending_delivery("+15551234567", "Hello!", outgoing_rowid=100)
+    assert isinstance(did, int)
+
+    # Retrieve pending
+    pending = s.get_pending_deliveries()
+    assert len(pending) == 1
+    assert pending[0]["chat_identifier"] == "+15551234567"
+    assert pending[0]["content"] == "Hello!"
+    assert pending[0]["attempts"] == 1
+
+    # Update: bump attempts and add service
+    s.update_delivery(did, attempts=2, services_tried="iMessage,SMS")
+    pending = s.get_pending_deliveries()
+    assert pending[0]["attempts"] == 2
+    assert "SMS" in pending[0]["services_tried"]
+
+    # Mark delivered → disappears from pending
+    s.update_delivery(did, status="delivered")
+    assert s.get_pending_deliveries() == []
+    assert s.clear_delivered() == 1
+
 def test_status_json_valid():
     """status.json exists and is valid JSON."""
     import json

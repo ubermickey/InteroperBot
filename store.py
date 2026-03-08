@@ -134,6 +134,18 @@ class SQLiteStore(MessageStore):
                     value TEXT,
                     PRIMARY KEY (contact_id, key)
                 );
+
+                CREATE TABLE IF NOT EXISTS pending_deliveries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    chat_identifier TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    services_tried TEXT NOT NULL DEFAULT 'iMessage',
+                    attempts INTEGER NOT NULL DEFAULT 1,
+                    max_attempts INTEGER NOT NULL DEFAULT 3,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    outgoing_rowid INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
             """)
 
     def log_message(
@@ -219,3 +231,49 @@ class SQLiteStore(MessageStore):
                 conn.execute("DELETE FROM messages WHERE contact_id = ?", (contact_id,))
             else:
                 conn.execute("DELETE FROM messages")
+
+    # --- Pending delivery tracking ---
+
+    def add_pending_delivery(
+        self, chat_identifier: str, content: str, outgoing_rowid: Optional[int] = None,
+    ) -> int:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "INSERT INTO pending_deliveries (chat_identifier, content, outgoing_rowid) "
+                "VALUES (?, ?, ?)",
+                (chat_identifier, content, outgoing_rowid),
+            )
+            return cursor.lastrowid
+
+    def get_pending_deliveries(self) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, chat_identifier, content, services_tried, attempts, "
+                "max_attempts, outgoing_rowid FROM pending_deliveries "
+                "WHERE status = 'pending'"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def update_delivery(self, delivery_id: int, **kwargs) -> None:
+        allowed = {"services_tried", "attempts", "status", "outgoing_rowid"}
+        sets = []
+        vals = []
+        for k, v in kwargs.items():
+            if k not in allowed:
+                continue
+            sets.append(f"{k} = ?")
+            vals.append(v)
+        if not sets:
+            return
+        vals.append(delivery_id)
+        with self._connect() as conn:
+            conn.execute(
+                f"UPDATE pending_deliveries SET {', '.join(sets)} WHERE id = ?", vals,
+            )
+
+    def clear_delivered(self) -> int:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM pending_deliveries WHERE status != 'pending'"
+            )
+            return cursor.rowcount

@@ -20,7 +20,7 @@ from pathlib import Path
 
 import config
 from ai import ClaudeAssistant
-from imessage import iMessageTransport
+from imessage import iMessageTransport, SERVICE_FALLBACK
 from store import SQLiteStore
 
 logging.basicConfig(
@@ -155,9 +155,11 @@ def main():
     signal.signal(signal.SIGTERM, handle_signal)
 
     last_rowid = transport.get_latest_rowid()
+    last_outgoing_rowid = transport.get_latest_outgoing_rowid()
     logger.info("Bot started. Watching for new messages (after ROWID %d)...", last_rowid)
 
     while not shutdown:
+        # --- Phase 1: Process incoming messages ---
         incoming = transport.poll_new_messages(last_rowid)
 
         for msg in incoming:
@@ -204,10 +206,80 @@ def main():
                 print(f"[{msg.chat_identifier}] {reply}")
             else:
                 transport.send_message(msg.chat_identifier, reply)
+                store.add_pending_delivery(
+                    msg.chat_identifier, reply, last_outgoing_rowid,
+                )
+                last_outgoing_rowid = transport.get_latest_outgoing_rowid()
+
+        # --- Phase 2: Check delivery status and retry failures ---
+        if not args.dry_run:
+            _check_and_retry_deliveries(store, transport)
 
         time.sleep(config.POLL_INTERVAL)
 
     logger.info("Bot stopped.")
+
+
+def _check_and_retry_deliveries(store: SQLiteStore, transport: iMessageTransport):
+    """Check pending deliveries against chat.db and retry failures."""
+    pending = store.get_pending_deliveries()
+    if not pending:
+        return
+
+    for delivery in pending:
+        outgoing_rowid = delivery["outgoing_rowid"] or 0
+        failures = transport.check_failed_deliveries(outgoing_rowid)
+
+        # Check if any failure matches this delivery's chat_identifier
+        failed = any(
+            f.chat_identifier == delivery["chat_identifier"] for f in failures
+        )
+
+        if not failed and delivery["attempts"] >= 2:
+            # No error detected after enough time — assume delivered
+            store.update_delivery(delivery["id"], status="delivered")
+            store.clear_delivered()
+            continue
+
+        if not failed:
+            # Still waiting for confirmation — check again next cycle
+            continue
+
+        # Delivery failed — try next service
+        attempts = delivery["attempts"]
+        services_tried = delivery["services_tried"]
+        tried_list = [s.strip() for s in services_tried.split(",")]
+
+        # Find next untried service
+        next_service = None
+        for svc in SERVICE_FALLBACK:
+            if svc not in tried_list:
+                next_service = svc
+                break
+
+        if next_service and attempts < delivery["max_attempts"]:
+            logger.warning(
+                "Delivery to %s failed via %s, retrying via %s (attempt %d/%d)",
+                delivery["chat_identifier"], tried_list[-1], next_service,
+                attempts + 1, delivery["max_attempts"],
+            )
+            transport.send_message(
+                delivery["chat_identifier"], delivery["content"],
+                service_type=next_service,
+            )
+            new_outgoing = transport.get_latest_outgoing_rowid()
+            store.update_delivery(
+                delivery["id"],
+                services_tried=services_tried + "," + next_service,
+                attempts=attempts + 1,
+                outgoing_rowid=new_outgoing,
+            )
+        else:
+            logger.error(
+                "Delivery to %s failed after %d attempts via %s — giving up",
+                delivery["chat_identifier"], attempts, services_tried,
+            )
+            store.update_delivery(delivery["id"], status="failed")
 
 
 if __name__ == "__main__":
