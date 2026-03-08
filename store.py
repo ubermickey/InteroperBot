@@ -277,3 +277,62 @@ class SQLiteStore(MessageStore):
                 "DELETE FROM pending_deliveries WHERE status != 'pending'"
             )
             return cursor.rowcount
+
+    # --- Dashboard query helpers ---
+
+    def get_all_conversations(self) -> list[dict]:
+        """All contacts with message count, last activity, and last message preview."""
+        with self._connect() as conn:
+            rows = conn.execute("""
+                SELECT c.id, c.identifier, c.display_name,
+                       COUNT(m.id) AS message_count,
+                       MAX(m.timestamp) AS last_activity,
+                       (SELECT content FROM messages
+                        WHERE contact_id = c.id
+                        ORDER BY timestamp DESC, id DESC LIMIT 1) AS last_message,
+                       (SELECT role FROM messages
+                        WHERE contact_id = c.id
+                        ORDER BY timestamp DESC, id DESC LIMIT 1) AS last_role
+                FROM contacts c
+                LEFT JOIN messages m ON m.contact_id = c.id
+                GROUP BY c.id
+                ORDER BY last_activity DESC NULLS LAST
+            """).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_conversation_timeline(self, contact_id: int, limit: int = 50) -> list[dict]:
+        """Messages with timestamps for train animation timeline."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, role, content, timestamp FROM messages "
+                "WHERE contact_id = ? "
+                "ORDER BY timestamp DESC, id DESC LIMIT ?",
+                (contact_id, limit),
+            ).fetchall()
+            return [dict(r) for r in reversed(rows)]
+
+    def get_yard_status(self) -> dict:
+        """AI and delivery status for the maintenance panel."""
+        with self._connect() as conn:
+            session_rows = conn.execute(
+                "SELECT cm.contact_id, c.identifier, cm.value AS session_id "
+                "FROM contact_metadata cm "
+                "JOIN contacts c ON c.id = cm.contact_id "
+                "WHERE cm.key = 'cli_session_id' AND cm.value != ''"
+            ).fetchall()
+            pending = conn.execute(
+                "SELECT id, chat_identifier, attempts, max_attempts, services_tried "
+                "FROM pending_deliveries WHERE status = 'pending'"
+            ).fetchall()
+            total_messages = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM messages"
+            ).fetchone()["cnt"]
+            total_contacts = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM contacts"
+            ).fetchone()["cnt"]
+        return {
+            "active_sessions": [dict(r) for r in session_rows],
+            "pending_deliveries": [dict(r) for r in pending],
+            "total_messages": total_messages,
+            "total_contacts": total_contacts,
+        }
