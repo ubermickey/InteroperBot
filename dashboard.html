@@ -706,7 +706,7 @@
         <div class="health-item">
           <div class="health-left">
             <div class="health-icon fail" id="healthApiIcon">&#10005;</div>
-            <span class="health-label">API Key</span>
+            <span class="health-label">Claude CLI</span>
           </div>
           <span class="health-status fail" id="healthApiStatus">UNKNOWN</span>
         </div>
@@ -1028,7 +1028,7 @@
   function renderHealth() {
     var health = safeGet(data, 'health', {});
     setHealthIndicator('healthDbIcon', 'healthDbStatus', safeGet(health, 'messages_db', false));
-    setHealthIndicator('healthApiIcon', 'healthApiStatus', safeGet(health, 'api_key', false));
+    setHealthIndicator('healthApiIcon', 'healthApiStatus', safeGet(health, 'claude_cli', false));
     setHealthIndicator('healthBotIcon', 'healthBotStatus', safeGet(health, 'bot_process', false));
 
     var diskPct = safeGet(health, 'disk_usage_pct', 0);
@@ -1204,7 +1204,7 @@
             project: 'InteroperBot', version: '0.0.0', status: 'unknown',
             uptime_since: null, last_message_at: null, messages_today: 0,
             threads: [], todos: [], council_log: [],
-            health: { messages_db: false, api_key: false, bot_process: false, disk_usage_pct: 0 },
+            health: { messages_db: false, claude_cli: false, bot_process: false, disk_usage_pct: 0 },
             activity_log: [], war_room: { active: false, blockers: [] }, team: {}
           };
           render();

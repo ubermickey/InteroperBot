@@ -7,7 +7,7 @@ Layer 4: ORCHESTRATION     bot.py
          Signal handling, polling loop, CLI args, contact filtering
 
 Layer 3: INTELLIGENCE      ai.py
-         Claude API wrapper, conversation context, system prompts
+         Claude CLI subprocess with session persistence (--resume), fallback recovery
 
 Layer 2: PERSISTENCE       store.py
          MessageStore ABC, SQLiteStore, contact management, metadata
@@ -37,7 +37,7 @@ Layer 1: TRANSPORT          imessage.py
                            ▼
                     ┌──────────────┐
                     │ Intelligence │  ai.py
-                    │  Layer 3     │  ClaudeAssistant.respond()
+                    │  Layer 3     │  claude -p (CLI subprocess)
                     └──────┬───────┘
                            │ reply text
                            ▼
@@ -60,13 +60,24 @@ Layer 1: TRANSPORT          imessage.py
 ### 1. Read-Only DB Access
 Transport opens `chat.db` in `?mode=ro` (URI parameter). We never write to Apple's database — only read. Replies go through AppleScript, which is the sanctioned API.
 
-### 2. Abstract Storage Interface
-`MessageStore` is an ABC with 7 abstract methods. `SQLiteStore` is the default implementation. This enables future backends (Notion, Postgres, custom EA systems) without touching bot logic.
+### 2. CLI Session-Based Memory
+The intelligence layer uses CLI sessions as the primary memory model:
 
-### 3. Polling Architecture
+```
+New contact:      claude -p "msg" --output-format json    → capture session_id
+Continuing:       claude -p "msg" --resume <sid> --output-format json
+Session lost:     fallback → rebuild from SQLiteStore history, start fresh session
+```
+
+No API key needed — it uses your existing Claude subscription. The CLI binary is resolved via `config.CLAUDE_CLI` (default: `~/.local/bin/claude`).
+
+### 3. Abstract Storage Interface
+`MessageStore` is an ABC with 7 abstract methods. `SQLiteStore` is the default implementation. It serves as: (a) intrasession log and audit trail, (b) fallback recovery source when CLI sessions expire, and (c) enables future backends (Notion, Postgres, custom EA systems). The `contact_metadata` table stores per-contact `cli_session_id` values.
+
+### 4. Polling Architecture
 The bot uses a simple `time.sleep()` poll loop rather than filesystem watchers or notification APIs. This is intentional — it's the most reliable approach given that `chat.db` is WAL-mode SQLite and fsevents on it are unreliable.
 
-### 4. Per-Contact Conversation Isolation
+### 5. Per-Contact Conversation Isolation
 Each iMessage contact gets their own conversation thread in the store. History is loaded per-contact and sent to Claude independently. No cross-contamination of conversations.
 
 ## Database Schema
@@ -90,6 +101,6 @@ chat_message_join (chat_id, message_id)
 | What | How | Where |
 |---|---|---|
 | New storage backend | Implement `MessageStore` ABC | `store.py` |
-| Different AI provider | Replace `ClaudeAssistant` | `ai.py` |
+| Different AI provider | Replace CLI subprocess call | `ai.py` |
 | Non-iMessage transport | New transport class | new file |
 | Message preprocessing | Add middleware in poll loop | `bot.py` |

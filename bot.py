@@ -72,7 +72,7 @@ def get_status() -> dict:
         "council_log": [],
         "health": {
             "messages_db": False,
-            "api_key": bool(config.ANTHROPIC_API_KEY),
+            "claude_cli": False,
             "bot_process": False,
             "disk_usage_pct": 0,
         },
@@ -96,6 +96,14 @@ def get_status() -> dict:
             status["health"]["messages_db"] = True
         except sqlite3.OperationalError:
             pass
+
+    # Check Claude CLI availability
+    try:
+        import subprocess as _sp
+        r = _sp.run([config.CLAUDE_CLI, "--version"], capture_output=True, text=True, timeout=5)
+        status["health"]["claude_cli"] = r.returncode == 0
+    except (FileNotFoundError, _sp.TimeoutExpired):
+        pass
 
     # Check disk usage
     try:
@@ -127,21 +135,19 @@ def main():
         print(json.dumps(status, indent=2))
         return
 
-    if not config.ANTHROPIC_API_KEY:
-        logger.error("ANTHROPIC_API_KEY not set. Create a .env file or export it.")
-        sys.exit(1)
-
     store = SQLiteStore(db_path=config.DB_PATH)
 
     if args.reset:
         store.clear_history()
-        logger.info("Conversation history cleared.")
+        # Also clear all CLI session IDs so fresh sessions start
+        with store._connect() as conn:
+            conn.execute("DELETE FROM contact_metadata WHERE key = 'cli_session_id'")
+        logger.info("Conversation history and CLI sessions cleared.")
         return
 
     assistant = ClaudeAssistant(
-        api_key=config.ANTHROPIC_API_KEY,
-        model=config.CLAUDE_MODEL,
         system_prompt=config.SYSTEM_PROMPT,
+        timeout=config.CLI_TIMEOUT,
     )
     transport = iMessageTransport()
 
@@ -167,6 +173,9 @@ def main():
             # Get or create the contact in our store
             contact_id = store.get_or_create_contact(msg.chat_identifier)
 
+            # Load CLI session for this contact (if any)
+            session_id = store.get_metadata(contact_id, "cli_session_id")
+
             # Log the incoming message
             store.log_message(
                 contact_id=contact_id,
@@ -175,9 +184,13 @@ def main():
                 timestamp=msg.timestamp,
             )
 
-            # Load conversation history and get Claude's response
+            # Get Claude's response (history is fallback-only now)
             history = store.get_history(contact_id, limit=config.MAX_HISTORY)
-            reply = assistant.respond(history)
+            reply, new_session_id = assistant.respond(history, session_id=session_id)
+
+            # Persist the CLI session ID for next turn
+            if new_session_id:
+                store.set_metadata(contact_id, "cli_session_id", new_session_id)
 
             # Log the reply
             store.log_message(

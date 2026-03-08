@@ -80,6 +80,53 @@ def test_apple_date_conversion():
     assert dt.year == 2024
     assert dt.month == 1
 
+def test_assistant_respond_returns_tuple():
+    """ClaudeAssistant.respond() returns (reply, session_id) tuple."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from ai import ClaudeAssistant
+
+    a = ClaudeAssistant()
+    # Empty messages → error tuple
+    result = a.respond([])
+    assert isinstance(result, tuple)
+    assert len(result) == 2
+    reply, sid = result
+    assert isinstance(reply, str)
+    assert sid is None
+
+def test_assistant_format_history():
+    """_format_history produces User/Assistant prefixed lines."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from ai import ClaudeAssistant
+
+    msgs = [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "hi"},
+        {"role": "user", "content": "bye"},
+    ]
+    out = ClaudeAssistant._format_history(msgs)
+    assert "User: hello" in out
+    assert "Assistant: hi" in out
+    # Last message excluded (it's the "latest" in respond())
+    assert "bye" not in out
+
+def test_store_session_id_roundtrip(tmp_path):
+    """cli_session_id can be stored and retrieved via metadata."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from store import SQLiteStore
+
+    db = str(tmp_path / "test.db")
+    s = SQLiteStore(db_path=db)
+    cid = s.get_or_create_contact("session-test@example.com")
+
+    assert s.get_metadata(cid, "cli_session_id") is None
+    s.set_metadata(cid, "cli_session_id", "abc-123-def")
+    assert s.get_metadata(cid, "cli_session_id") == "abc-123-def"
+
+    # Overwrite works (upsert)
+    s.set_metadata(cid, "cli_session_id", "new-session-456")
+    assert s.get_metadata(cid, "cli_session_id") == "new-session-456"
+
 def test_status_json_valid():
     """status.json exists and is valid JSON."""
     import json

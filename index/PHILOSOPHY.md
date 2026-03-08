@@ -21,18 +21,19 @@ InteroperBot has one job: bridge iMessage and Claude. Every design decision serv
 - Message content is PII — treat it accordingly
 - Never log full message content (truncate to 80 chars)
 - Conversation DB is local-only (`~/.interoperbot/`)
-- API key never leaves `.env` (gitignored)
+- No API key in the project — Claude CLI uses your subscription auth
 - Messages DB accessed read-only
 
 ### 5. Fail Gracefully
-- API errors return a friendly fallback message, not a crash
+- CLI errors return a friendly fallback message, not a crash
+- Expired CLI sessions trigger automatic recovery from SQLiteStore history
 - Missing Messages DB is diagnosed, not panicked on
 - AppleScript failures are logged and continued past
 - The bot should survive any single-point failure
 
 ### 6. Convention Over Configuration
 - Sensible defaults for all settings (poll interval, history limit, model)
-- `.env` for overrides, not required for basic operation (except API key)
+- `.env` for overrides, not required for basic operation (no API key needed)
 - Directory structure is predictable and documented
 
 ## Anti-Patterns to Avoid

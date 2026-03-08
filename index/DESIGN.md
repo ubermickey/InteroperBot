@@ -2,11 +2,12 @@
 
 ## Design Philosophy
 
-InteroperBot is a **CLI-first** tool. There is no web UI for the bot itself — iMessage *is* the user interface. Design effort focuses on:
+InteroperBot is a **CLI-first** tool with two transports: iMessage (primary) and web chat (secondary). Design effort focuses on:
 
 1. **Terminal output** — clear, scannable log output during bot operation
 2. **Dashboard** — Mission Control for development visibility
 3. **CLI flags** — intuitive command-line interface
+4. **Web chat** — browser-based alternative via `web.py`
 
 ## Terminal Output Design
 
@@ -27,11 +28,13 @@ InteroperBot is a **CLI-first** tool. There is no web UI for the bot itself — 
 ## CLI Interface
 
 ```
-python bot.py              # Run the bot (default)
+python bot.py              # Run the iMessage bot
 python bot.py --dry-run    # Print responses to stdout
 python bot.py --reset      # Clear conversation history
 python bot.py --status     # Output JSON status for dashboard
 python bot.py --help       # Show help
+python web.py              # Web chat UI at http://localhost:8000
+python web.py --port 3000  # Custom port
 ```
 
 ### Flag Design Rules

@@ -5,6 +5,7 @@
 ### Prerequisites
 - macOS with Messages.app signed into iMessage
 - Python 3.10+
+- Claude CLI installed and authenticated (`npm install -g @anthropic-ai/claude-code`)
 - Terminal granted **Full Disk Access** (System Settings > Privacy & Security > Full Disk Access)
 
 ### First-Time Setup
@@ -13,8 +14,8 @@ cd /Users/mikeudem/Projects/InteroperBot
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
-# Edit .env — set ANTHROPIC_API_KEY
+cp .env.example .env        # All settings optional — no API key needed
+claude --version             # Verify Claude CLI is available
 ```
 
 ### Validate Environment
@@ -71,12 +72,14 @@ open dashboard.html        # View Mission Control
 ```
 InteroperBot/
 ├── bot.py              # Entry point (Layer 4: Orchestration)
-├── ai.py               # Claude API wrapper (Layer 3: Intelligence)
+├── ai.py               # Claude CLI subprocess (Layer 3: Intelligence)
 ├── store.py            # Storage abstraction (Layer 2: Persistence)
 ├── imessage.py         # iMessage transport (Layer 1: Transport)
 ├── config.py           # Environment configuration
 ├── requirements.txt    # Python dependencies
-├── .env.example        # Template for secrets
+├── web.py              # Web chat interface (FastAPI)
+├── chat.html           # Web chat UI
+├── .env.example        # Template for settings (no API key needed)
 ├── .gitignore          # Git exclusions
 ├── CLAUDE.md           # Claude Code instructions
 ├── README.md           # Project documentation

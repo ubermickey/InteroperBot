@@ -75,5 +75,5 @@ Result:  [Outcome]
 - Tests live in `tests/` directory
 - Test files named `test_*.py` (pytest discovery)
 - Probes named `probe_*.py` (standalone scripts, not pytest)
-- All smoke tests must run offline (no network, no API key, no Messages DB)
+- All smoke tests must run offline (no network, no Claude CLI, no Messages DB)
 - Use `tmp_path` fixture for any DB-backed tests (no persistent state)
