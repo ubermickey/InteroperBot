@@ -7,6 +7,7 @@ SQLiteStore serves as a backup log for recovery when sessions expire.
 
 import json
 import logging
+import os
 import subprocess
 from typing import Optional
 
@@ -26,6 +27,8 @@ class ClaudeAssistant:
         self.system_prompt = system_prompt
         self.timeout = timeout
         self.claude_bin = config.CLAUDE_CLI
+        # Strip nesting guard so CLI works when launched from a Claude Code terminal
+        self._env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
 
     def respond(
         self,
@@ -54,7 +57,8 @@ class ClaudeAssistant:
 
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=self.timeout,
+                cmd, capture_output=True, text=True,
+                timeout=self.timeout, env=self._env,
             )
 
             if result.returncode != 0 and session_id:
@@ -101,7 +105,8 @@ class ClaudeAssistant:
 
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=self.timeout,
+                cmd, capture_output=True, text=True,
+                timeout=self.timeout, env=self._env,
             )
 
             if result.returncode != 0:
