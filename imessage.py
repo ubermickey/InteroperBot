@@ -133,9 +133,10 @@ class iMessageTransport:
     ) -> bool:
         """Send a message via AppleScript using the specified service type."""
         escaped = text.replace("\\", "\\\\").replace('"', '\\"')
+        escaped_id = chat_identifier.replace("\\", "\\\\").replace('"', '\\"')
         script = (
             f'tell application "Messages" to send "{escaped}" '
-            f'to buddy "{chat_identifier}" of '
+            f'to buddy "{escaped_id}" of '
             f'(service 1 whose service type is {service_type})'
         )
         try:
