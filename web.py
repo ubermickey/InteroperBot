@@ -80,44 +80,6 @@ async def clear():
     return JSONResponse({"status": "cleared"})
 
 
-# --- Grand Central Messaging dashboard ---
-
-@app.get("/grand-central")
-async def grand_central():
-    return FileResponse(Path(__file__).parent / "grand-central.html")
-
-
-@app.get("/api/yard/tracks")
-async def yard_tracks():
-    return JSONResponse(store.get_all_conversations())
-
-
-@app.get("/api/yard/trains/{contact_id}")
-async def yard_trains(contact_id: int, limit: int = 50):
-    return JSONResponse(store.get_conversation_timeline(contact_id, limit))
-
-
-@app.get("/api/yard/maintenance")
-async def yard_maintenance():
-    return JSONResponse(store.get_yard_status())
-
-
-@app.get("/api/yard/schedule")
-async def yard_schedule():
-    conversations = store.get_all_conversations()
-    schedule = []
-    for conv in conversations:
-        schedule.append({
-            "contact": conv["display_name"] or conv["identifier"],
-            "identifier": conv["identifier"],
-            "last_message": (conv["last_message"] or "")[:80],
-            "direction": "arriving" if conv["last_role"] == "user" else "departing",
-            "last_activity": conv["last_activity"],
-            "message_count": conv["message_count"],
-        })
-    return JSONResponse(schedule)
-
-
 def main():
     parser = argparse.ArgumentParser(description="InteroperBot web interface")
     parser.add_argument("--port", type=int, default=8000)

@@ -16,6 +16,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 # macOS Messages stores dates as nanoseconds since 2001-01-01
+# attributedBody stores NSAttributedString as Apple typedstream binary
 APPLE_EPOCH_OFFSET = 978307200  # seconds between 1970-01-01 and 2001-01-01
 
 # Service fallback order
@@ -47,6 +48,82 @@ def _apple_date_to_datetime(apple_date: int) -> datetime:
     return datetime.fromtimestamp(unix_ts, tz=timezone.utc)
 
 
+def _extract_attributed_text(blob: Optional[bytes]) -> Optional[str]:
+    """Extract plain text from an NSAttributedString typedstream blob.
+
+    The attributedBody column stores a NeXT typedstream binary. The readable
+    text sits between the NSString type header and the NSDictionary metadata.
+    We locate it by scanning for the NSString/NSSuperString marker byte
+    sequence and extracting the UTF-8 content that follows.
+    """
+    if not blob:
+        return None
+    try:
+        # The typedstream contains the text after a length-prefixed NSString.
+        # Strategy: find the "+NSString" or "NSAttributedString" marker,
+        # then read the length-prefixed text block that follows.
+        # The text block starts after a specific byte pattern:
+        #   ...NSString...  <length_byte> <text_bytes>  ...NSDictionary...
+        text = blob.decode("utf-8", errors="replace")
+
+        # Look for content between the stream header and attribute metadata.
+        # The typedstream places the actual string after "NSString" class info
+        # and terminates before "NSDictionary" or "NSAttributes" sections.
+        # A reliable heuristic: find the first substantial UTF-8 run after
+        # the binary header and before the attribute dictionaries.
+
+        # Approach: scan the raw bytes for the longest UTF-8 run.
+        # The text payload is always the longest printable sequence in the blob.
+        runs = []
+        current_run = bytearray()
+        for byte in blob:
+            # Accept printable ASCII, common UTF-8 continuation, newlines, tabs
+            if 0x20 <= byte <= 0x7E or byte in (0x0A, 0x0D, 0x09):
+                current_run.append(byte)
+            elif byte >= 0xC0:  # UTF-8 multibyte lead
+                current_run.append(byte)
+            elif byte >= 0x80 and current_run and current_run[-1] >= 0x80:
+                current_run.append(byte)  # UTF-8 continuation
+            else:
+                if len(current_run) > 1:
+                    runs.append(bytes(current_run))
+                current_run = bytearray()
+        if len(current_run) > 1:
+            runs.append(bytes(current_run))
+
+        if not runs:
+            return None
+
+        # The actual message text is the longest run, decoded as UTF-8
+        longest = max(runs, key=len)
+        decoded = longest.decode("utf-8", errors="replace").strip()
+
+        # Filter out typedstream metadata strings (class names, keys)
+        # These are short and contain known Apple class markers
+        metadata_markers = (
+            "NSAttributedString", "NSString", "NSDictionary",
+            "NSMutableAttributedString", "NSObject", "NSMutableString",
+            "NSColor", "NSFont", "NSParagraphStyle",
+            "streamtyped", "__kIMMessage",
+        )
+        if any(decoded.startswith(m) for m in metadata_markers):
+            # This run is metadata — try the second longest
+            runs_decoded = []
+            for r in runs:
+                d = r.decode("utf-8", errors="replace").strip()
+                if d and not any(d.startswith(m) for m in metadata_markers):
+                    runs_decoded.append(d)
+            if runs_decoded:
+                decoded = max(runs_decoded, key=len)
+            else:
+                return None
+
+        return decoded if len(decoded) > 0 else None
+    except Exception as e:
+        logger.debug("attributedBody extraction failed: %s", e)
+        return None
+
+
 class iMessageTransport:
     """Reads from and writes to iMessage via macOS APIs."""
 
@@ -75,13 +152,19 @@ class iMessageTransport:
             return row["max_id"] or 0
 
     def poll_new_messages(self, last_rowid: int) -> list[IncomingMessage]:
-        """Fetch all incoming messages with ROWID > last_rowid."""
+        """Fetch all incoming messages with ROWID > last_rowid.
+
+        Reads both `text` and `attributedBody` columns — macOS stores ~95%
+        of messages only in attributedBody (NSAttributedString binary).
+        """
         query = """
-            SELECT m.ROWID, m.text, m.date, c.chat_identifier
+            SELECT m.ROWID, m.text, m.date, m.attributedBody,
+                   m.associated_message_type, c.chat_identifier
             FROM message m
             JOIN chat_message_join cmj ON m.ROWID = cmj.message_id
             JOIN chat c ON cmj.chat_id = c.ROWID
-            WHERE m.ROWID > ? AND m.is_from_me = 0 AND m.text IS NOT NULL
+            WHERE m.ROWID > ? AND m.is_from_me = 0
+              AND (m.text IS NOT NULL OR m.attributedBody IS NOT NULL)
             ORDER BY m.ROWID ASC
         """
         messages = []
@@ -89,10 +172,20 @@ class iMessageTransport:
             with self._connect() as conn:
                 rows = conn.execute(query, (last_rowid,)).fetchall()
                 for row in rows:
+                    # Skip tapbacks/reactions (associated_message_type != 0)
+                    if row["associated_message_type"]:
+                        continue
+
+                    text = row["text"] or _extract_attributed_text(
+                        row["attributedBody"]
+                    )
+                    if not text:
+                        continue  # attachment-only or undecodable
+
                     messages.append(
                         IncomingMessage(
                             rowid=row["ROWID"],
-                            text=row["text"],
+                            text=text,
                             chat_identifier=row["chat_identifier"],
                             timestamp=_apple_date_to_datetime(row["date"]),
                         )

@@ -157,6 +157,49 @@ def test_pending_delivery_lifecycle(tmp_path):
     assert s.get_pending_deliveries() == []
     assert s.clear_delivered() == 1
 
+def test_extract_attributed_text_basic():
+    """_extract_attributed_text extracts text from a synthetic typedstream blob."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from imessage import _extract_attributed_text
+
+    # Simulate a typedstream blob: binary header + readable text + binary metadata
+    header = b'\x04\x0b\x73\x74\x72\x65\x61\x6d\x74\x79\x70\x65\x64'  # "streamtyped"
+    padding = b'\x81\x00\x01\x02'
+    text_content = b'Hi Mike, thanks for your time. My clients are David and Marcela.'
+    trailer = b'\x00\x86\x84\x00\x8c\x04\x01'
+
+    blob = header + padding + text_content + trailer
+    result = _extract_attributed_text(blob)
+    assert result is not None
+    assert "Hi Mike" in result
+    assert "David and Marcela" in result
+
+
+def test_extract_attributed_text_none():
+    """_extract_attributed_text handles None and empty blobs."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from imessage import _extract_attributed_text
+
+    assert _extract_attributed_text(None) is None
+    assert _extract_attributed_text(b'') is None
+    # Pure binary with no printable runs
+    assert _extract_attributed_text(b'\x00\x01\x02\x03') is None
+
+
+def test_extract_attributed_text_prefers_text_over_metadata():
+    """_extract_attributed_text skips Apple class name runs."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from imessage import _extract_attributed_text
+
+    # Blob where the longest run is a metadata class name
+    metadata_run = b'NSMutableAttributedString'
+    actual_text = b'Hello from iMessage!'
+    blob = b'\x00' + metadata_run + b'\x00\x04\x02' + actual_text + b'\x00'
+    result = _extract_attributed_text(blob)
+    assert result is not None
+    assert "Hello from iMessage" in result
+
+
 def test_status_json_valid():
     """status.json exists and is valid JSON."""
     import json
