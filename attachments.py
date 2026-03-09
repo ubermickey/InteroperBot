@@ -76,7 +76,7 @@ def _transcribe_audio(file_path: str, timeout: int) -> Optional[str]:
     """Run on-device audio transcription (SFSpeechRecognizer)."""
     if not TRANSCRIBE_BIN.exists():
         return None
-    data = _run_helper([TRANSCRIBE_BIN, file_path], timeout)
+    data = _run_helper([TRANSCRIBE_BIN, file_path, str(timeout)], timeout + 5)
     if not data:
         return None
     transcript = data.get("transcript", "").strip()
