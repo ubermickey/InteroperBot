@@ -15,7 +15,7 @@ def test_bot_help():
 
 def test_imports():
     """All modules import without error."""
-    for mod in ["config", "ai", "imessage", "store"]:
+    for mod in ["config", "ai", "imessage", "store", "attachments"]:
         importlib.import_module(mod)
 
 def test_store_roundtrip(tmp_path):
@@ -198,6 +198,133 @@ def test_extract_attributed_text_prefers_text_over_metadata():
     result = _extract_attributed_text(blob)
     assert result is not None
     assert "Hello from iMessage" in result
+
+
+def test_attachment_dataclass():
+    """Attachment dataclass constructs correctly."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from imessage import Attachment
+    att = Attachment(
+        rowid=42,
+        mime_type="image/heic",
+        filename="/Users/test/Library/Messages/Attachments/ab/photo.heic",
+        transfer_name="photo.heic",
+        total_bytes=3_200_000,
+        media_type="image",
+    )
+    assert att.rowid == 42
+    assert att.media_type == "image"
+    assert att.total_bytes == 3_200_000
+
+
+def test_classify_media_type():
+    """_classify_media_type maps MIME types to broad categories."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from imessage import _classify_media_type
+    assert _classify_media_type("image/heic") == "image"
+    assert _classify_media_type("image/jpeg") == "image"
+    assert _classify_media_type("audio/x-m4a") == "audio"
+    assert _classify_media_type("video/quicktime") == "video"
+    assert _classify_media_type("application/pdf") == "document"
+    assert _classify_media_type(None) == "document"
+
+
+def test_expand_attachment_path():
+    """_expand_attachment_path replaces ~/ with home directory."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from imessage import _expand_attachment_path
+    from pathlib import Path
+    result = _expand_attachment_path("~/Library/Messages/Attachments/ab/photo.heic")
+    assert result.startswith(str(Path.home()))
+    assert "~/Library" not in result
+    assert _expand_attachment_path(None) is None
+
+
+def test_incoming_message_with_attachments():
+    """IncomingMessage can hold attachments."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from imessage import IncomingMessage, Attachment
+    from datetime import datetime, timezone
+    msg = IncomingMessage(
+        rowid=1, text="Check this out",
+        chat_identifier="+15551234567",
+        timestamp=datetime.now(timezone.utc),
+        attachments=[
+            Attachment(rowid=10, mime_type="image/jpeg",
+                       filename="/tmp/photo.jpg", transfer_name="photo.jpg",
+                       total_bytes=1024, media_type="image"),
+        ],
+    )
+    assert len(msg.attachments) == 1
+    assert msg.attachments[0].media_type == "image"
+
+
+def test_incoming_message_attachment_only():
+    """Attachment-only messages have empty text."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from imessage import IncomingMessage, Attachment
+    from datetime import datetime, timezone
+    msg = IncomingMessage(
+        rowid=1, text="",
+        chat_identifier="+15551234567",
+        timestamp=datetime.now(timezone.utc),
+        attachments=[
+            Attachment(rowid=10, mime_type="image/heic",
+                       filename="/tmp/photo.heic", transfer_name="photo.heic",
+                       total_bytes=5_000_000, media_type="image"),
+        ],
+    )
+    assert msg.text == ""
+    assert len(msg.attachments) == 1
+
+
+def test_human_size():
+    """_human_size formats byte counts readably."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from attachments import _human_size
+    assert _human_size(500) == "500 B"
+    assert _human_size(1024) == "1.0 KB"
+    assert _human_size(2_500_000) == "2.4 MB"
+    assert _human_size(1_500_000_000) == "1.4 GB"
+
+
+def test_enrich_attachment_missing_file():
+    """enrich_attachment returns metadata-only for missing files."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from attachments import enrich_attachment
+    from imessage import Attachment
+    att = Attachment(
+        rowid=1, mime_type="image/jpeg",
+        filename="/nonexistent/photo.jpg",
+        transfer_name="photo.jpg",
+        total_bytes=1024, media_type="image",
+    )
+    desc = enrich_attachment(att, timeout=5)
+    assert "photo.jpg" in desc
+    assert "file unavailable" in desc
+
+
+def test_enrich_attachment_no_filename():
+    """enrich_attachment handles None filename."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from attachments import enrich_attachment
+    from imessage import Attachment
+    att = Attachment(
+        rowid=1, mime_type="image/jpeg",
+        filename=None, transfer_name="photo.jpg",
+        total_bytes=2048, media_type="image",
+    )
+    desc = enrich_attachment(att, timeout=5)
+    assert "photo.jpg" in desc
+    assert "file unavailable" in desc
+
+
+def test_config_attachment_defaults():
+    """Attachment config defaults are sensible."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    import config
+    assert config.ENABLE_ATTACHMENTS is True
+    assert config.ATTACHMENT_TIMEOUT == 30
 
 
 def test_status_json_valid():

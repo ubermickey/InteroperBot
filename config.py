@@ -27,3 +27,7 @@ DB_PATH: str = os.getenv(
 CLAUDE_CLI: str = os.getenv(
     "CLAUDE_CLI", str(Path.home() / ".local" / "bin" / "claude")
 )
+
+# Attachment processing
+ENABLE_ATTACHMENTS: bool = os.getenv("ENABLE_ATTACHMENTS", "true").lower() == "true"
+ATTACHMENT_TIMEOUT: int = int(os.getenv("ATTACHMENT_TIMEOUT", "30"))

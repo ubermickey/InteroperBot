@@ -8,7 +8,7 @@ async chat.db polling and automatic service fallback (iMessage → SMS).
 import sqlite3
 import subprocess
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -24,11 +24,39 @@ SERVICE_FALLBACK = ["iMessage", "SMS"]
 
 
 @dataclass
+class Attachment:
+    rowid: int
+    mime_type: Optional[str]     # "image/heic", "audio/x-m4a", "video/quicktime"
+    filename: Optional[str]      # expanded absolute path on disk
+    transfer_name: Optional[str] # original filename
+    total_bytes: int
+    media_type: str              # "image", "audio", "video", "document"
+
+
+def _classify_media_type(mime_type: Optional[str]) -> str:
+    """Classify a MIME type into a broad media category."""
+    if not mime_type:
+        return "document"
+    prefix = mime_type.split("/")[0]
+    if prefix in ("image", "audio", "video"):
+        return prefix
+    return "document"
+
+
+def _expand_attachment_path(filename: Optional[str]) -> Optional[str]:
+    """Expand ~/Library paths from chat.db to absolute paths."""
+    if not filename:
+        return None
+    return filename.replace("~/", str(Path.home()) + "/")
+
+
+@dataclass
 class IncomingMessage:
     rowid: int
-    text: str
-    chat_identifier: str  # phone number or email
+    text: str                    # "" for attachment-only messages
+    chat_identifier: str         # phone number or email
     timestamp: datetime
+    attachments: list[Attachment] = field(default_factory=list)
 
 
 @dataclass
@@ -156,40 +184,68 @@ class iMessageTransport:
 
         Reads both `text` and `attributedBody` columns — macOS stores ~95%
         of messages only in attributedBody (NSAttributedString binary).
+        Also LEFT JOINs attachment metadata for photo/audio/video messages.
         """
         query = """
             SELECT m.ROWID, m.text, m.date, m.attributedBody,
-                   m.associated_message_type, c.chat_identifier
+                   m.associated_message_type, c.chat_identifier,
+                   a.ROWID as att_rowid, a.mime_type, a.filename as att_filename,
+                   a.transfer_name, a.total_bytes
             FROM message m
             JOIN chat_message_join cmj ON m.ROWID = cmj.message_id
             JOIN chat c ON cmj.chat_id = c.ROWID
+            LEFT JOIN message_attachment_join maj ON m.ROWID = maj.message_id
+            LEFT JOIN attachment a ON maj.attachment_id = a.ROWID
             WHERE m.ROWID > ? AND m.is_from_me = 0
-              AND (m.text IS NOT NULL OR m.attributedBody IS NOT NULL)
+              AND (m.text IS NOT NULL OR m.attributedBody IS NOT NULL
+                   OR a.ROWID IS NOT NULL)
             ORDER BY m.ROWID ASC
         """
         messages = []
+        seen: dict[int, IncomingMessage] = {}  # group rows by m.ROWID
         try:
             with self._connect() as conn:
                 rows = conn.execute(query, (last_rowid,)).fetchall()
                 for row in rows:
+                    msg_rowid = row["ROWID"]
+
                     # Skip tapbacks/reactions (associated_message_type != 0)
                     if row["associated_message_type"]:
                         continue
 
-                    text = row["text"] or _extract_attributed_text(
-                        row["attributedBody"]
-                    )
-                    if not text:
-                        continue  # attachment-only or undecodable
-
-                    messages.append(
-                        IncomingMessage(
-                            rowid=row["ROWID"],
-                            text=text,
+                    # Build or reuse the IncomingMessage for this ROWID
+                    if msg_rowid not in seen:
+                        text = row["text"] or _extract_attributed_text(
+                            row["attributedBody"]
+                        )
+                        seen[msg_rowid] = IncomingMessage(
+                            rowid=msg_rowid,
+                            text=text or "",
                             chat_identifier=row["chat_identifier"],
                             timestamp=_apple_date_to_datetime(row["date"]),
                         )
-                    )
+
+                    # Append attachment if present (LEFT JOIN can be NULL)
+                    if row["att_rowid"]:
+                        mime = row["mime_type"]
+                        seen[msg_rowid].attachments.append(
+                            Attachment(
+                                rowid=row["att_rowid"],
+                                mime_type=mime,
+                                filename=_expand_attachment_path(row["att_filename"]),
+                                transfer_name=row["transfer_name"],
+                                total_bytes=row["total_bytes"] or 0,
+                                media_type=_classify_media_type(mime),
+                            )
+                        )
+
+                # Only include messages that have text or attachments
+                for msg in seen.values():
+                    if msg.text or msg.attachments:
+                        messages.append(msg)
+                # Sort by rowid (dict preserves insertion order, but be explicit)
+                messages.sort(key=lambda m: m.rowid)
+
         except sqlite3.OperationalError as e:
             logger.error("Failed to read Messages DB: %s", e)
         return messages

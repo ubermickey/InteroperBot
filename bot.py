@@ -20,6 +20,7 @@ from pathlib import Path
 
 import config
 from ai import ClaudeAssistant
+from attachments import enrich_attachments
 from imessage import iMessageTransport, SERVICE_FALLBACK
 from store import SQLiteStore
 
@@ -170,7 +171,24 @@ def main():
                 logger.debug("Skipping message from %s (not in allowed list)", msg.chat_identifier)
                 continue
 
-            logger.info("Message from %s: %s", msg.chat_identifier, msg.text[:80])
+            # Build enriched content: text + attachment descriptions
+            content = msg.text
+            metadata = None
+            if msg.attachments and config.ENABLE_ATTACHMENTS:
+                descriptions = enrich_attachments(msg.attachments)
+                attachment_context = "\n".join(
+                    f"[Attached: {d}]" for d in descriptions
+                )
+                content = f"{msg.text}\n{attachment_context}" if msg.text else attachment_context
+                metadata = {
+                    "attachments": [
+                        {"filename": a.transfer_name, "mime_type": a.mime_type,
+                         "size": a.total_bytes, "media_type": a.media_type}
+                        for a in msg.attachments
+                    ]
+                }
+
+            logger.info("Message from %s: %s", msg.chat_identifier, content[:80])
 
             # Get or create the contact in our store
             contact_id = store.get_or_create_contact(msg.chat_identifier)
@@ -178,12 +196,13 @@ def main():
             # Load CLI session for this contact (if any)
             session_id = store.get_metadata(contact_id, "cli_session_id")
 
-            # Log the incoming message
+            # Log the incoming message (enriched content + attachment metadata)
             store.log_message(
                 contact_id=contact_id,
                 role="user",
-                content=msg.text,
+                content=content,
                 timestamp=msg.timestamp,
+                metadata=metadata,
             )
 
             # Get Claude's response (history is fallback-only now)
