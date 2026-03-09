@@ -28,10 +28,18 @@ fi
 mkdir -p "$OUTDIR"
 
 # Extract up to 5 keyframes at even intervals
+# Try I-frame selection first, fall back to scene-change or uniform sampling
 "$FFMPEG" -y -i "$VIDEO" \
     -vf "select=eq(pict_type\\,I)" -vsync vfill \
     -frames:v 5 -q:v 2 \
     "$OUTDIR/keyframe_%03d.jpg" 2>/dev/null || true
+
+# If no keyframes extracted (e.g. HEVC without I-frame markers), sample uniformly
+if ! ls "$OUTDIR"/keyframe_*.jpg &>/dev/null; then
+    "$FFMPEG" -y -i "$VIDEO" \
+        -vf "fps=1/3" -frames:v 5 -q:v 2 \
+        "$OUTDIR/keyframe_%03d.jpg" 2>/dev/null || true
+fi
 
 # Extract audio as WAV (16kHz mono for transcription)
 AUDIO_OUT="$OUTDIR/audio.wav"
@@ -39,8 +47,9 @@ AUDIO_OUT="$OUTDIR/audio.wav"
     -vn -acodec pcm_s16le -ar 16000 -ac 1 \
     "$AUDIO_OUT" 2>/dev/null || true
 
-# Get video duration via ffprobe
-DURATION=$("$FFMPEG" -i "$VIDEO" 2>&1 | grep -oP 'Duration: \K[0-9:.]+' || echo "unknown")
+# Get video duration (macOS grep doesn't have -P, use sed instead)
+DURATION=$(("$FFMPEG" -i "$VIDEO" 2>&1 || true) | sed -n 's/.*Duration: \([0-9:.]*\).*/\1/p' | head -1 | tr -d '\n')
+DURATION="${DURATION:-unknown}"
 
 # Build JSON output with file listing
 FRAMES="["
@@ -61,6 +70,5 @@ if [ -f "$AUDIO_OUT" ] && [ -s "$AUDIO_OUT" ]; then
     HAS_AUDIO="true"
 fi
 
-cat <<EOF
-{"keyframes": $FRAMES, "audio": $([ "$HAS_AUDIO" = "true" ] && echo "\"$AUDIO_OUT\"" || echo "null"), "duration": "$DURATION"}
-EOF
+AUDIO_JSON=$([ "$HAS_AUDIO" = "true" ] && echo "\"$AUDIO_OUT\"" || echo "null")
+printf '{"keyframes": %s, "audio": %s, "duration": "%s"}\n' "$FRAMES" "$AUDIO_JSON" "$DURATION"
