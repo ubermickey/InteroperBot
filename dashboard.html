@@ -92,6 +92,22 @@
     color: var(--text-muted);
   }
 
+  .setup-link {
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 12px;
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    transition: all var(--transition);
+  }
+
+  .setup-link:hover {
+    color: var(--text);
+    border-color: var(--text-muted);
+    background: var(--bg);
+  }
+
   .refresh-indicator {
     display: flex;
     align-items: center;
@@ -601,6 +617,7 @@
     <span class="header-version" id="version">v0.0.0</span>
   </div>
   <div class="header-right">
+    <a class="setup-link" href="setup.html">Setup</a>
     <span class="last-fetch" id="lastFetch">Fetching...</span>
     <div class="refresh-indicator">
       <div class="refresh-ring">

@@ -1,0 +1,918 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>InteroperBot Setup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0d1117;
+    --card: #161b22;
+    --card-hover: #1c2129;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-muted: #8b949e;
+    --green: #3fb950;
+    --blue: #58a6ff;
+    --orange: #d29922;
+    --red: #f85149;
+    --purple: #bc8cff;
+    --green-dim: rgba(63, 185, 80, 0.15);
+    --blue-dim: rgba(88, 166, 255, 0.15);
+    --orange-dim: rgba(210, 153, 34, 0.15);
+    --red-dim: rgba(248, 81, 73, 0.15);
+    --radius: 8px;
+    --transition: 0.2s ease;
+  }
+
+  body {
+    font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .header {
+    background: rgba(22, 27, 34, 0.9);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    backdrop-filter: blur(12px);
+  }
+
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .header-title {
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    background: linear-gradient(135deg, var(--blue), var(--green));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .back-link {
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: color var(--transition);
+  }
+
+  .back-link:hover { color: var(--text); }
+
+  .main {
+    padding: 24px;
+    max-width: 720px;
+    margin: 0 auto;
+  }
+
+  /* --- Progress Bar --- */
+
+  .progress-bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    margin-bottom: 32px;
+    padding: 20px 0;
+  }
+
+  .step-indicator {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    position: relative;
+    z-index: 1;
+  }
+
+  .step-dot {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 2px solid var(--border);
+    background: var(--bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-muted);
+    transition: all 0.3s ease;
+  }
+
+  .step-indicator.active .step-dot {
+    border-color: var(--blue);
+    background: var(--blue-dim);
+    color: var(--blue);
+  }
+
+  .step-indicator.done .step-dot {
+    border-color: var(--green);
+    background: var(--green-dim);
+    color: var(--green);
+  }
+
+  .step-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  .step-indicator.active .step-label { color: var(--blue); }
+  .step-indicator.done .step-label { color: var(--green); }
+
+  .step-line {
+    width: 64px;
+    height: 2px;
+    background: var(--border);
+    margin-bottom: 20px;
+    transition: background 0.3s ease;
+  }
+
+  .step-line.done { background: var(--green); }
+
+  /* --- Wizard Cards --- */
+
+  .step-panel {
+    display: none;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 28px;
+    margin-bottom: 20px;
+    animation: fadeIn 0.3s ease;
+  }
+
+  .step-panel.active { display: block; }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .step-panel h2 {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .step-panel p {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+    line-height: 1.6;
+  }
+
+  .code-block {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 16px;
+    font-size: 13px;
+    color: var(--green);
+    margin: 12px 0;
+    position: relative;
+    cursor: pointer;
+    transition: border-color var(--transition);
+    word-break: break-all;
+  }
+
+  .code-block:hover { border-color: var(--text-muted); }
+
+  .code-block .copy-hint {
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .spinner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 16px;
+  }
+
+  .spinner-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--blue);
+    animation: spinPulse 1.4s ease-in-out infinite;
+  }
+
+  @keyframes spinPulse {
+    0%, 100% { opacity: 0.3; transform: scale(0.8); }
+    50% { opacity: 1; transform: scale(1.2); }
+  }
+
+  /* --- QR Display --- */
+
+  .qr-container {
+    display: flex;
+    justify-content: center;
+    padding: 24px 0;
+  }
+
+  .qr-frame {
+    background: #ffffff;
+    border-radius: 12px;
+    padding: 16px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    position: relative;
+  }
+
+  .qr-frame img {
+    display: block;
+    width: 240px;
+    height: 240px;
+    image-rendering: pixelated;
+  }
+
+  .qr-timer {
+    text-align: center;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 8px;
+  }
+
+  .scan-steps {
+    list-style: none;
+    counter-reset: scan-step;
+    margin: 16px 0;
+  }
+
+  .scan-steps li {
+    counter-increment: scan-step;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    font-size: 13px;
+    padding: 6px 0;
+    color: var(--text-muted);
+  }
+
+  .scan-steps li::before {
+    content: counter(scan-step);
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  /* --- Connected State --- */
+
+  .success-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--green-dim);
+    color: var(--green);
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 16px;
+  }
+
+  .next-steps {
+    margin-top: 16px;
+  }
+
+  .next-steps h3 {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+  }
+
+  .next-steps li {
+    font-size: 12px;
+    color: var(--text-muted);
+    padding: 4px 0;
+    list-style: none;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .next-steps li::before {
+    content: '\2192';
+    color: var(--green);
+    flex-shrink: 0;
+  }
+
+  /* --- Rate Limit Guide --- */
+
+  .guide-panel {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    margin-bottom: 20px;
+  }
+
+  .guide-toggle {
+    width: 100%;
+    background: none;
+    border: none;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 14px 18px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    transition: background var(--transition);
+  }
+
+  .guide-toggle:hover { background: var(--card-hover); }
+
+  .guide-toggle .left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .guide-toggle .chevron {
+    transition: transform 0.3s ease;
+    font-size: 14px;
+    color: var(--text-muted);
+  }
+
+  .guide-toggle.expanded .chevron { transform: rotate(180deg); }
+
+  .guide-content {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.4s ease;
+    border-top: 1px solid transparent;
+  }
+
+  .guide-content.open {
+    max-height: 300px;
+    border-top-color: var(--border);
+  }
+
+  .guide-content ul {
+    list-style: none;
+    padding: 14px 18px;
+  }
+
+  .guide-content li {
+    font-size: 12px;
+    color: var(--text-muted);
+    padding: 6px 0;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    line-height: 1.5;
+  }
+
+  .guide-content li::before {
+    content: '\25CF';
+    color: var(--orange);
+    font-size: 8px;
+    margin-top: 4px;
+    flex-shrink: 0;
+  }
+
+  /* --- Event Log --- */
+
+  .event-log {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+
+  .log-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .log-badge {
+    font-size: 10px;
+    font-weight: 500;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+  }
+
+  .log-body {
+    max-height: 180px;
+    overflow-y: auto;
+    padding: 8px 18px;
+  }
+
+  .log-entry {
+    display: flex;
+    gap: 10px;
+    padding: 5px 0;
+    font-size: 11px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .log-entry:last-child { border-bottom: none; }
+
+  .log-time {
+    color: var(--text-muted);
+    flex-shrink: 0;
+    min-width: 56px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .log-msg { color: var(--text); word-break: break-word; }
+  .log-msg.info { color: var(--blue); }
+  .log-msg.ok { color: var(--green); }
+  .log-msg.warn { color: var(--orange); }
+  .log-msg.err { color: var(--red); }
+
+  .log-empty {
+    text-align: center;
+    padding: 16px;
+    color: var(--text-muted);
+    font-size: 11px;
+  }
+
+  /* --- Responsive --- */
+
+  @media (max-width: 600px) {
+    .main { padding: 16px; }
+    .step-line { width: 32px; }
+    .step-panel { padding: 20px; }
+    .qr-frame img { width: 200px; height: 200px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="header">
+  <div class="header-left">
+    <a class="back-link" href="dashboard.html">&larr; Mission Control</a>
+    <span class="header-title">WhatsApp Setup</span>
+  </div>
+</header>
+
+<main class="main">
+
+  <!-- Progress Bar -->
+  <div class="progress-bar">
+    <div class="step-indicator active" id="ind-1">
+      <div class="step-dot">1</div>
+      <span class="step-label">Connect</span>
+    </div>
+    <div class="step-line" id="line-1"></div>
+    <div class="step-indicator" id="ind-2">
+      <div class="step-dot">2</div>
+      <span class="step-label">Wait</span>
+    </div>
+    <div class="step-line" id="line-2"></div>
+    <div class="step-indicator" id="ind-3">
+      <div class="step-dot">3</div>
+      <span class="step-label">Scan</span>
+    </div>
+    <div class="step-line" id="line-3"></div>
+    <div class="step-indicator" id="ind-4">
+      <div class="step-dot">4</div>
+      <span class="step-label">Done</span>
+    </div>
+  </div>
+
+  <!-- Step 1: Bridge Offline -->
+  <div class="step-panel active" id="panel-offline">
+    <h2>Start the WhatsApp Bridge</h2>
+    <p>The bridge is a local Node.js process that connects to WhatsApp. Start it from your terminal:</p>
+    <div class="code-block" onclick="navigator.clipboard.writeText('python bot.py --setup-whatsapp')">
+      python bot.py --setup-whatsapp
+      <span class="copy-hint">click to copy</span>
+    </div>
+    <p>Or with a phone number for pairing code (instead of QR):</p>
+    <div class="code-block" onclick="navigator.clipboard.writeText('python bot.py --setup-whatsapp +1XXXXXXXXXX')">
+      python bot.py --setup-whatsapp +1XXXXXXXXXX
+      <span class="copy-hint">click to copy</span>
+    </div>
+    <div class="spinner">
+      <span class="spinner-dot"></span>
+      <span>Checking for bridge on localhost:3456...</span>
+    </div>
+  </div>
+
+  <!-- Step 2: Waiting for QR -->
+  <div class="step-panel" id="panel-waiting">
+    <h2>Connecting to WhatsApp</h2>
+    <p>Bridge detected. Requesting QR code from WhatsApp servers...</p>
+    <p>This may take a few seconds. The bridge paces requests to avoid rate limits.</p>
+    <div class="spinner">
+      <span class="spinner-dot"></span>
+      <span>Waiting for QR code...</span>
+    </div>
+  </div>
+
+  <!-- Step 3: QR Code -->
+  <div class="step-panel" id="panel-qr">
+    <h2>Scan QR Code</h2>
+    <ol class="scan-steps">
+      <li>Open <strong>WhatsApp</strong> on your phone</li>
+      <li><strong>iOS:</strong> Settings &rarr; Linked Devices &mdash; <strong>Android:</strong> Menu (&vellip;) &rarr; Linked Devices</li>
+      <li>Tap <strong>Link a Device</strong></li>
+      <li>Point your camera at the QR code below</li>
+    </ol>
+    <div class="qr-container">
+      <div class="qr-frame">
+        <img id="qrImage" alt="QR Code" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7">
+      </div>
+    </div>
+    <p class="qr-timer" id="qrTimer">QR codes refresh automatically (~20 seconds)</p>
+  </div>
+
+  <!-- Step 4: Connected -->
+  <div class="step-panel" id="panel-connected">
+    <h2>Connected</h2>
+    <div class="success-badge">
+      <span>&#10003;</span>
+      <span>WhatsApp linked successfully</span>
+    </div>
+    <p>Account: <strong id="waUser">--</strong></p>
+    <div class="next-steps">
+      <h3>Next Steps</h3>
+      <ul>
+        <li>Press Ctrl+C in the terminal to stop the setup bridge</li>
+        <li>Run the bot with WhatsApp enabled:</li>
+      </ul>
+      <div class="code-block" onclick="navigator.clipboard.writeText('WHATSAPP_ENABLED=true python bot.py')">
+        WHATSAPP_ENABLED=true python bot.py
+        <span class="copy-hint">click to copy</span>
+      </div>
+      <ul>
+        <li>Auth credentials saved to helpers/wa-bridge/auth/ (persists across restarts)</li>
+        <li>No need to scan QR again unless you unlink the device</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Step: Error -->
+  <div class="step-panel" id="panel-error">
+    <h2 style="color: var(--red);">Connection Issue</h2>
+    <p id="errorDetail">The bridge encountered an error.</p>
+    <p>If you've been rate-limited, wait 5 minutes before retrying. Delete the auth/ folder for a fresh start:</p>
+    <div class="code-block" onclick="navigator.clipboard.writeText('rm -rf helpers/wa-bridge/auth && python bot.py --setup-whatsapp')">
+      rm -rf helpers/wa-bridge/auth && python bot.py --setup-whatsapp
+      <span class="copy-hint">click to copy</span>
+    </div>
+  </div>
+
+  <!-- Rate Limit Guide -->
+  <div class="guide-panel">
+    <button class="guide-toggle" id="guideToggle">
+      <span class="left">
+        <span>&#9888;</span>
+        <span>Rate Limit Guide</span>
+      </span>
+      <span class="chevron">&#9660;</span>
+    </button>
+    <div class="guide-content" id="guideContent">
+      <ul>
+        <li>QR codes expire every ~20 seconds. WhatsApp generates new ones automatically &mdash; this page just displays them.</li>
+        <li>The bridge allows up to 10 reconnect attempts with 5-second delays between each.</li>
+        <li>If you hit "logged out" or repeated failures, wait at least 5 minutes before starting a new setup.</li>
+        <li>Delete helpers/wa-bridge/auth/ only when starting completely fresh &mdash; it clears saved credentials.</li>
+        <li>This page never triggers QR generation &mdash; it passively displays what the bridge provides.</li>
+        <li>Keep WhatsApp open on your phone during the entire setup process.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Event Log -->
+  <div class="event-log">
+    <div class="log-header">
+      <span>Connection Log</span>
+      <span class="log-badge" id="logCount">0 events</span>
+    </div>
+    <div class="log-body" id="logBody">
+      <div class="log-empty">Waiting for bridge connection...</div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+(function() {
+  'use strict';
+
+  var BRIDGE_PORT = 3456;
+  var BRIDGE_URL = 'http://127.0.0.1:' + BRIDGE_PORT;
+  var WS_URL = 'ws://127.0.0.1:' + BRIDGE_PORT + '/ws';
+  var POLL_INTERVAL = 3000;
+
+  var currentStep = 'offline';
+  var ws = null;
+  var pollTimer = null;
+  var logEntries = [];
+  var qrCount = 0;
+  var guideOpen = false;
+
+  function $(id) { return document.getElementById(id); }
+
+  // --- Logging ---
+
+  function addLog(msg, level) {
+    var now = new Date();
+    var time = now.toLocaleTimeString('en-US', {
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+    });
+    logEntries.push({ time: time, msg: msg, level: level || '' });
+    renderLog();
+  }
+
+  function renderLog() {
+    var body = $('logBody');
+    while (body.firstChild) body.removeChild(body.firstChild);
+    $('logCount').textContent = logEntries.length + ' event' + (logEntries.length !== 1 ? 's' : '');
+
+    if (logEntries.length === 0) {
+      var empty = document.createElement('div');
+      empty.className = 'log-empty';
+      empty.textContent = 'Waiting for bridge connection...';
+      body.appendChild(empty);
+      return;
+    }
+
+    var entries = logEntries.slice(-30);
+    for (var i = entries.length - 1; i >= 0; i--) {
+      var entry = entries[i];
+      var row = document.createElement('div');
+      row.className = 'log-entry';
+
+      var timeEl = document.createElement('span');
+      timeEl.className = 'log-time';
+      timeEl.textContent = entry.time;
+
+      var msgEl = document.createElement('span');
+      msgEl.className = 'log-msg' + (entry.level ? ' ' + entry.level : '');
+      msgEl.textContent = entry.msg;
+
+      row.appendChild(timeEl);
+      row.appendChild(msgEl);
+      body.appendChild(row);
+    }
+    body.scrollTop = 0;
+  }
+
+  // --- Step Management ---
+
+  var STEP_ORDER = ['offline', 'waiting', 'qr', 'connected'];
+
+  function setStep(step) {
+    if (step === currentStep) return;
+    currentStep = step;
+
+    // Update panels
+    var panels = ['offline', 'waiting', 'qr', 'connected', 'error'];
+    for (var i = 0; i < panels.length; i++) {
+      var panel = $('panel-' + panels[i]);
+      if (panel) panel.className = 'step-panel' + (panels[i] === step ? ' active' : '');
+    }
+
+    // Update progress indicators
+    var stepIndex = STEP_ORDER.indexOf(step);
+    if (step === 'error') stepIndex = -1;
+
+    for (var j = 1; j <= 4; j++) {
+      var ind = $('ind-' + j);
+      var dot = ind.querySelector('.step-dot');
+      ind.className = 'step-indicator';
+
+      if (j - 1 < stepIndex) {
+        ind.classList.add('done');
+        dot.textContent = '\u2713';
+      } else if (j - 1 === stepIndex) {
+        ind.classList.add('active');
+        dot.textContent = j;
+      } else {
+        dot.textContent = j;
+      }
+    }
+
+    for (var k = 1; k <= 3; k++) {
+      var line = $('line-' + k);
+      line.className = 'step-line' + (k <= stepIndex ? ' done' : '');
+    }
+  }
+
+  // --- Bridge Polling ---
+
+  function pollBridge() {
+    fetch(BRIDGE_URL + '/status')
+      .then(function(r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function(data) {
+        if (data.connected) {
+          addLog('WhatsApp connected as ' + (data.user || 'unknown'), 'ok');
+          $('waUser').textContent = data.user || 'unknown';
+          setStep('connected');
+          stopPolling();
+          connectWS();
+        } else if (data.qrPending) {
+          if (currentStep === 'offline') {
+            addLog('Bridge detected', 'info');
+          }
+          setStep('qr');
+          stopPolling();
+          connectWS();
+          fetchQR();
+        } else {
+          if (currentStep === 'offline') {
+            addLog('Bridge detected, waiting for QR...', 'info');
+          }
+          setStep('waiting');
+          stopPolling();
+          connectWS();
+        }
+      })
+      .catch(function() {
+        if (currentStep !== 'offline') {
+          addLog('Bridge not reachable', 'warn');
+        }
+        setStep('offline');
+      });
+  }
+
+  function fetchQR() {
+    fetch(BRIDGE_URL + '/qr')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.qrImage) {
+          showQR(data.qrImage);
+        }
+      })
+      .catch(function() {});
+  }
+
+  function startPolling() {
+    if (pollTimer) return;
+    pollTimer = setInterval(pollBridge, POLL_INTERVAL);
+  }
+
+  function stopPolling() {
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+  }
+
+  // --- WebSocket ---
+
+  function connectWS() {
+    if (ws) return;
+
+    try {
+      ws = new WebSocket(WS_URL);
+    } catch (e) {
+      addLog('WebSocket connection failed', 'err');
+      return;
+    }
+
+    ws.onopen = function() {
+      addLog('WebSocket connected to bridge', 'info');
+    };
+
+    ws.onmessage = function(e) {
+      try {
+        var data = JSON.parse(e.data);
+
+        if (data.type === 'qr') {
+          qrCount++;
+          addLog('QR code received (#' + qrCount + ')', 'info');
+          if (data.qrImage) {
+            showQR(data.qrImage);
+          }
+          setStep('qr');
+        }
+
+        if (data.type === 'status') {
+          if (data.connected) {
+            addLog('WhatsApp connected', 'ok');
+            setStep('connected');
+            // Fetch user info
+            fetch(BRIDGE_URL + '/status')
+              .then(function(r) { return r.json(); })
+              .then(function(s) {
+                $('waUser').textContent = s.user || 'unknown';
+              })
+              .catch(function() {});
+          } else if (data.qrPending) {
+            setStep('qr');
+          }
+        }
+      } catch (err) {
+        addLog('Unexpected message from bridge', 'warn');
+      }
+    };
+
+    ws.onclose = function() {
+      addLog('WebSocket disconnected', 'warn');
+      ws = null;
+      // Resume polling to detect bridge restart
+      if (currentStep !== 'connected') {
+        setStep('offline');
+        startPolling();
+      }
+    };
+
+    ws.onerror = function() {
+      addLog('WebSocket error', 'err');
+    };
+  }
+
+  // --- QR Display ---
+
+  function showQR(dataUrl) {
+    var img = $('qrImage');
+    img.src = dataUrl;
+  }
+
+  // --- Guide Toggle ---
+
+  $('guideToggle').addEventListener('click', function() {
+    guideOpen = !guideOpen;
+    var toggle = $('guideToggle');
+    var content = $('guideContent');
+    if (guideOpen) {
+      toggle.classList.add('expanded');
+      content.classList.add('open');
+    } else {
+      toggle.classList.remove('expanded');
+      content.classList.remove('open');
+    }
+  });
+
+  // --- Init ---
+
+  addLog('Setup page loaded, checking bridge...', 'info');
+  pollBridge();
+  startPolling();
+
+})();
+</script>
+</body>
+</html>
