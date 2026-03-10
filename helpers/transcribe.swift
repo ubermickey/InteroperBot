@@ -1,7 +1,7 @@
 #!/usr/bin/env swift
 // transcribe.swift — On-device audio transcription via Apple Speech framework.
 // Usage: ./transcribe /path/to/audio.m4a [timeout_seconds]
-// Output: JSON {"transcript": "...", "confidence": 0.85}
+// Output: JSON {"transcript": "...", "confidence": 0.85, "segments": [...]}
 
 import Foundation
 import Speech
@@ -61,42 +61,126 @@ guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US")) e
     exit(1)
 }
 
-let request = SFSpeechURLRecognitionRequest(url: url)
-if recognizer.supportsOnDeviceRecognition {
-    request.requiresOnDeviceRecognition = true
+// Transcription function — builds result JSON from a final transcription result
+func buildResult(_ result: SFSpeechRecognitionResult) -> [String: Any] {
+    let transcript = result.bestTranscription.formattedString
+    let segments = result.bestTranscription.segments
+    let avgConfidence: Float = segments.isEmpty ? 0 :
+        segments.reduce(0) { $0 + $1.confidence } / Float(segments.count)
+
+    // Group word-level segments into sentence-like chunks
+    // Split on: pauses > 0.5s, sentence-ending punctuation (. ? !)
+    var chunks: [[String: Any]] = []
+    var currentText = ""
+    var chunkStart: Double = 0
+    var lastEnd: Double = 0
+
+    for (i, seg) in segments.enumerated() {
+        let segStart = seg.timestamp
+        let segEnd = seg.timestamp + seg.duration
+
+        if i == 0 {
+            chunkStart = segStart
+            currentText = seg.substring
+        } else {
+            let gap = segStart - lastEnd
+            let endsWithPunct = currentText.hasSuffix(".")
+                || currentText.hasSuffix("?")
+                || currentText.hasSuffix("!")
+
+            if gap > 0.5 || endsWithPunct {
+                // Flush current chunk
+                chunks.append([
+                    "text": currentText,
+                    "start": round(chunkStart * 10) / 10,
+                    "end": round(lastEnd * 10) / 10
+                ])
+                currentText = seg.substring
+                chunkStart = segStart
+            } else {
+                currentText += " " + seg.substring
+            }
+        }
+        lastEnd = segEnd
+    }
+
+    // Flush final chunk
+    if !currentText.isEmpty {
+        chunks.append([
+            "text": currentText,
+            "start": round(chunkStart * 10) / 10,
+            "end": round(lastEnd * 10) / 10
+        ])
+    }
+
+    // Word-level timing for subtitle animation
+    var wordTimings: [[String: Any]] = []
+    for seg in segments {
+        wordTimings.append([
+            "word": seg.substring,
+            "start": round(seg.timestamp * 100) / 100,
+            "end": round((seg.timestamp + seg.duration) * 100) / 100
+        ])
+    }
+
+    return [
+        "transcript": transcript,
+        "confidence": round(Double(avgConfidence) * 100) / 100,
+        "segments": chunks,
+        "words": wordTimings
+    ]
 }
 
-var done = false
+// Run recognition with a given on-device preference
+func runRecognition(onDevice: Bool) -> [String: Any]? {
+    let request = SFSpeechURLRecognitionRequest(url: url)
+    request.requiresOnDeviceRecognition = onDevice
+
+    var finished = false
+    var result: [String: Any]? = nil
+
+    recognizer.recognitionTask(with: request) { taskResult, error in
+        if let error = error {
+            result = ["error": error.localizedDescription, "transcript": ""]
+            finished = true
+            return
+        }
+        guard let taskResult = taskResult else { return }
+        if taskResult.isFinal {
+            result = buildResult(taskResult)
+            finished = true
+        }
+    }
+
+    let deadline = Date(timeIntervalSinceNow: Double(timeoutSeconds))
+    while !finished && Date() < deadline {
+        RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.25))
+    }
+
+    if !finished { return nil }
+    return result
+}
+
+// Strategy: try on-device first (fast, private), fall back to server-side
+// if on-device returns empty or errors
 var outputJSON: [String: Any] = [:]
 
-recognizer.recognitionTask(with: request) { result, error in
-    if let error = error {
-        outputJSON = ["error": error.localizedDescription, "transcript": ""]
-        done = true
-        return
-    }
-    guard let result = result else { return }
-    if result.isFinal {
-        let transcript = result.bestTranscription.formattedString
-        let segments = result.bestTranscription.segments
-        let avgConfidence: Float = segments.isEmpty ? 0 :
-            segments.reduce(0) { $0 + $1.confidence } / Float(segments.count)
-        outputJSON = [
-            "transcript": transcript,
-            "confidence": round(Double(avgConfidence) * 100) / 100
-        ]
-        done = true
+if recognizer.supportsOnDeviceRecognition {
+    if let result = runRecognition(onDevice: true) {
+        let transcript = result["transcript"] as? String ?? ""
+        if !transcript.isEmpty {
+            outputJSON = result
+        }
     }
 }
 
-// Pump the RunLoop until done or timeout
-let deadline = Date(timeIntervalSinceNow: Double(timeoutSeconds))
-while !done && Date() < deadline {
-    RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.25))
-}
-
-if !done {
-    outputJSON = ["error": "Transcription timed out after \(timeoutSeconds) seconds", "transcript": ""]
+// Fall back to server-side if on-device produced nothing
+if outputJSON.isEmpty {
+    if let result = runRecognition(onDevice: false) {
+        outputJSON = result
+    } else {
+        outputJSON = ["error": "Transcription timed out after \(timeoutSeconds) seconds", "transcript": ""]
+    }
 }
 
 writeResult(outputJSON)

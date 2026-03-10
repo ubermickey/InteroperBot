@@ -2,7 +2,10 @@
 
 Handles reading incoming messages from the macOS Messages SQLite database
 and sending replies via AppleScript. Includes delivery confirmation via
-async chat.db polling and automatic service fallback (iMessage → SMS).
+async chat.db polling and automatic service fallback (iMessage -> SMS).
+
+Implements the Transport ABC so MessageRouter can use it alongside
+WhatsApp, Web, and future transports.
 """
 
 import sqlite3
@@ -12,6 +15,13 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+import config
+from transport import (
+    Transport,
+    IncomingMessage as TransportMessage,
+    MessageAttachment,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -152,13 +162,84 @@ def _extract_attributed_text(blob: Optional[bytes]) -> Optional[str]:
         return None
 
 
-class iMessageTransport:
-    """Reads from and writes to iMessage via macOS APIs."""
+class iMessageTransport(Transport):
+    """Reads from and writes to iMessage via macOS APIs.
 
+    Implements the Transport ABC for use with MessageRouter.
+    Also supports standalone use for backward compatibility.
+    """
+
+    name = "imessage"
     MESSAGES_DB = Path.home() / "Library" / "Messages" / "chat.db"
 
-    def __init__(self, db_path: Optional[str] = None):
+    def __init__(self, db_path: Optional[str] = None, store=None, dry_run: bool = False):
         self.db_path = db_path or str(self.MESSAGES_DB)
+        self._store = store       # optional, for delivery tracking
+        self._dry_run = dry_run
+        self._last_rowid = 0
+        self._last_outgoing_rowid = 0
+
+    # --- Transport ABC ---
+
+    def start(self, on_message=None) -> None:
+        """Initialize polling state."""
+        self._last_rowid = self.get_latest_rowid()
+        self._last_outgoing_rowid = self.get_latest_outgoing_rowid()
+        logger.info(
+            "iMessage transport started (after ROWID %d)", self._last_rowid,
+        )
+
+    def poll(self, on_message=None) -> None:
+        """Poll for new messages, convert to transport format, fire callback."""
+        incoming = self.poll_new_messages(self._last_rowid)
+
+        for msg in incoming:
+            self._last_rowid = max(self._last_rowid, msg.rowid)
+
+            if config.ALLOWED_CONTACTS and msg.chat_identifier not in config.ALLOWED_CONTACTS:
+                logger.debug("Skipping message from %s (not in allowed list)", msg.chat_identifier)
+                continue
+
+            if on_message:
+                transport_msg = TransportMessage(
+                    transport="imessage",
+                    sender=msg.chat_identifier,
+                    text=msg.text,
+                    timestamp=msg.timestamp,
+                    attachments=[
+                        MessageAttachment(
+                            mime_type=a.mime_type,
+                            filename=a.transfer_name,
+                            local_path=a.filename,
+                            size_bytes=a.total_bytes,
+                            media_type=a.media_type,
+                        )
+                        for a in msg.attachments
+                    ],
+                )
+                on_message(transport_msg)
+
+        # iMessage-specific: check delivery status and retry failures
+        if self._store and not self._dry_run:
+            self._check_deliveries()
+
+    def send(self, recipient: str, text: str) -> bool:
+        """Send via AppleScript. Tracks delivery if store is available."""
+        if self._dry_run:
+            print(f"[{recipient}] {text}")
+            return True
+        success = self.send_message(recipient, text)
+        if success and self._store:
+            self._store.add_pending_delivery(
+                recipient, text, self._last_outgoing_rowid,
+            )
+            self._last_outgoing_rowid = self.get_latest_outgoing_rowid()
+        return success
+
+    def stop(self) -> None:
+        logger.info("iMessage transport stopped")
+
+    # --- Core iMessage methods (unchanged) ---
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
@@ -306,3 +387,61 @@ class iMessageTransport:
         except subprocess.TimeoutExpired:
             logger.error("AppleScript timed out for %s", chat_identifier)
             return False
+
+    # --- Delivery tracking (iMessage-specific) ---
+
+    def _check_deliveries(self) -> None:
+        """Check pending deliveries against chat.db and retry failures."""
+        pending = self._store.get_pending_deliveries()
+        if not pending:
+            return
+
+        for delivery in pending:
+            outgoing_rowid = delivery["outgoing_rowid"] or 0
+            failures = self.check_failed_deliveries(outgoing_rowid)
+
+            failed = any(
+                f.chat_identifier == delivery["chat_identifier"] for f in failures
+            )
+
+            if not failed and delivery["attempts"] >= 2:
+                self._store.update_delivery(delivery["id"], status="delivered")
+                self._store.clear_delivered()
+                continue
+
+            if not failed:
+                continue
+
+            attempts = delivery["attempts"]
+            services_tried = delivery["services_tried"]
+            tried_list = [s.strip() for s in services_tried.split(",")]
+
+            next_service = None
+            for svc in SERVICE_FALLBACK:
+                if svc not in tried_list:
+                    next_service = svc
+                    break
+
+            if next_service and attempts < delivery["max_attempts"]:
+                logger.warning(
+                    "Delivery to %s failed via %s, retrying via %s (attempt %d/%d)",
+                    delivery["chat_identifier"], tried_list[-1], next_service,
+                    attempts + 1, delivery["max_attempts"],
+                )
+                self.send_message(
+                    delivery["chat_identifier"], delivery["content"],
+                    service_type=next_service,
+                )
+                new_outgoing = self.get_latest_outgoing_rowid()
+                self._store.update_delivery(
+                    delivery["id"],
+                    services_tried=services_tried + "," + next_service,
+                    attempts=attempts + 1,
+                    outgoing_rowid=new_outgoing,
+                )
+            else:
+                logger.error(
+                    "Delivery to %s failed after %d attempts via %s — giving up",
+                    delivery["chat_identifier"], attempts, services_tried,
+                )
+                self._store.update_delivery(delivery["id"], status="failed")

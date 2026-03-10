@@ -31,3 +31,12 @@ CLAUDE_CLI: str = os.getenv(
 # Attachment processing
 ENABLE_ATTACHMENTS: bool = os.getenv("ENABLE_ATTACHMENTS", "true").lower() == "true"
 ATTACHMENT_TIMEOUT: int = int(os.getenv("ATTACHMENT_TIMEOUT", "30"))
+MAX_VIDEO_FRAMES: int = int(os.getenv("MAX_VIDEO_FRAMES", "30"))
+
+# WhatsApp (Baileys bridge)
+WHATSAPP_ENABLED: bool = os.getenv("WHATSAPP_ENABLED", "false").lower() == "true"
+WHATSAPP_BRIDGE_PORT: int = int(os.getenv("WHATSAPP_BRIDGE_PORT", "3456"))
+
+# Web UI
+WEB_ENABLED: bool = os.getenv("WEB_ENABLED", "true").lower() == "true"
+WEB_PORT: int = int(os.getenv("WEB_PORT", "8000"))

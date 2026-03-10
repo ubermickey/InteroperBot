@@ -1,8 +1,11 @@
 """Attachment enrichment layer.
 
 Coordinates on-device processing (Swift helpers, ffmpeg) to produce
-text descriptions of iMessage attachments — photos, voice memos, videos.
+text descriptions of message attachments — photos, voice memos, videos.
 Enriched descriptions are injected into the text prompt sent to Claude.
+
+Supports both transport-agnostic MessageAttachment (used by MessageRouter)
+and legacy imessage.Attachment (used by existing code/tests).
 """
 
 import json
@@ -14,6 +17,7 @@ from typing import Optional
 
 import config
 from imessage import Attachment
+from transport import MessageAttachment
 
 logger = logging.getLogger(__name__)
 
@@ -84,39 +88,50 @@ def _transcribe_audio(file_path: str, timeout: int) -> Optional[str]:
 
 
 def _process_video(file_path: str, timeout: int) -> Optional[str]:
-    """Extract keyframes + audio from video, describe frames, transcribe audio."""
+    """Extract frames + audio from video, use Claude CLI to describe.
+
+    Pipeline: ffmpeg frames → transcribe with timestamps → Claude reads
+    frames via Read tool and produces a rich description of the video content.
+    Falls back to transcript-only if Claude description fails.
+    """
     if not EXTRACT_KEYFRAMES.exists():
         return None
 
     with tempfile.TemporaryDirectory(prefix="interoperbot_video_") as tmpdir:
-        # Extract keyframes + audio
+        # Extract frames + audio (smart: 1fps or 1/2fps based on duration)
         data = _run_helper([EXTRACT_KEYFRAMES, file_path, tmpdir], timeout)
         if not data:
             return None
 
-        parts = []
         duration = data.get("duration", "unknown")
-        if duration and duration != "unknown":
-            parts.append(f"{duration}")
+        frames = data.get("frames", [])
 
-        # Describe keyframes
-        keyframes = data.get("keyframes", [])
-        frame_descs = []
-        per_frame_timeout = max(5, timeout // max(len(keyframes), 1))
-        for frame_path in keyframes[:3]:  # limit to 3 frames
-            desc = _describe_image(frame_path, per_frame_timeout)
-            if desc:
-                frame_descs.append(desc)
-        if frame_descs:
-            parts.append("shows " + ", ".join(frame_descs))
-
-        # Transcribe audio track
+        # Transcribe audio with timestamps
         audio_path = data.get("audio")
+        segments = []
+        transcript_text = None
         if audio_path:
-            transcript = _transcribe_audio(audio_path, timeout)
-            if transcript:
-                parts.append(f"audio: '{transcript}'")
+            audio_data = _run_helper(
+                [TRANSCRIBE_BIN, audio_path, str(timeout)], timeout + 5,
+            )
+            if audio_data:
+                transcript_text = audio_data.get("transcript", "").strip()
+                segments = audio_data.get("segments", [])
 
+        # Use Claude CLI to describe the video (reads frames via Read tool)
+        if frames:
+            from ai import ClaudeAssistant
+            assistant = ClaudeAssistant(timeout=config.CLI_TIMEOUT)
+            description = assistant.describe_video(frames, segments, duration)
+            if description:
+                return description
+
+        # Fallback: metadata + transcript only
+        parts = []
+        if duration and duration != "unknown":
+            parts.append(duration)
+        if transcript_text:
+            parts.append(f"audio: '{transcript_text}'")
         return "; ".join(parts) if parts else None
 
 
@@ -159,6 +174,53 @@ def enrich_attachments(attachments: list[Attachment]) -> list[str]:
         except Exception as e:
             logger.error("Attachment enrichment failed for %s: %s", att.transfer_name, e)
             name = att.transfer_name or "file"
+            desc = f"{att.media_type}: {name} (processing failed)"
+        descriptions.append(desc)
+    return descriptions
+
+
+# --- Transport-agnostic attachment enrichment ---
+
+
+def enrich_message_attachment(att: MessageAttachment, timeout: int) -> str:
+    """Process a transport-agnostic MessageAttachment and return a description.
+
+    Same enrichment pipeline as enrich_attachment but works with the
+    transport-level MessageAttachment type used by MessageRouter.
+    """
+    name = att.filename or "file"
+    size = _human_size(att.size_bytes)
+    mime = att.mime_type or "unknown type"
+    metadata_desc = f"{att.media_type}: {name} ({size}, {mime})"
+
+    if not att.local_path or not Path(att.local_path).exists():
+        return f"{metadata_desc}, file unavailable"
+
+    detail = None
+    if att.media_type == "image":
+        detail = _describe_image(att.local_path, timeout)
+    elif att.media_type == "audio":
+        transcript = _transcribe_audio(att.local_path, timeout)
+        if transcript:
+            detail = f"transcript: '{transcript}'"
+    elif att.media_type == "video":
+        detail = _process_video(att.local_path, timeout)
+
+    if detail:
+        return f"{metadata_desc} — {detail}"
+    return metadata_desc
+
+
+def enrich_message_attachments(attachments: list[MessageAttachment]) -> list[str]:
+    """Process transport-agnostic attachments and return text descriptions."""
+    timeout = config.ATTACHMENT_TIMEOUT
+    descriptions = []
+    for att in attachments:
+        try:
+            desc = enrich_message_attachment(att, timeout)
+        except Exception as e:
+            logger.error("Attachment enrichment failed for %s: %s", att.filename, e)
+            name = att.filename or "file"
             desc = f"{att.media_type}: {name} (processing failed)"
         descriptions.append(desc)
     return descriptions

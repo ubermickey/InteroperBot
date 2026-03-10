@@ -3,6 +3,7 @@ import subprocess
 import sys
 import importlib
 
+
 def test_bot_help():
     """bot.py --help exits cleanly."""
     result = subprocess.run(
@@ -13,10 +14,13 @@ def test_bot_help():
     assert result.returncode == 0
     assert "InteroperBot" in result.stdout
 
+
 def test_imports():
     """All modules import without error."""
-    for mod in ["config", "ai", "imessage", "store", "attachments"]:
+    for mod in ["config", "ai", "imessage", "store", "attachments",
+                "transport", "core", "whatsapp"]:
         importlib.import_module(mod)
+
 
 def test_store_roundtrip(tmp_path):
     """SQLiteStore can create, log, and retrieve messages."""
@@ -37,6 +41,7 @@ def test_store_roundtrip(tmp_path):
     assert history[0]["role"] == "user"
     assert history[1]["role"] == "assistant"
 
+
 def test_store_metadata(tmp_path):
     """Metadata round-trip works."""
     sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
@@ -49,6 +54,7 @@ def test_store_metadata(tmp_path):
     assert s.get_metadata(cid, "key1") is None
     s.set_metadata(cid, "key1", "value1")
     assert s.get_metadata(cid, "key1") == "value1"
+
 
 def test_store_clear(tmp_path):
     """Clear history works."""
@@ -63,6 +69,7 @@ def test_store_clear(tmp_path):
 
     s.clear_history(cid)
     assert s.get_history(cid) == []
+
 
 def test_apple_date_conversion():
     """Apple date conversion produces reasonable timestamps."""
@@ -80,6 +87,7 @@ def test_apple_date_conversion():
     assert dt.year == 2024
     assert dt.month == 1
 
+
 def test_assistant_respond_returns_tuple():
     """ClaudeAssistant.respond() returns (reply, session_id) tuple."""
     sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
@@ -93,6 +101,7 @@ def test_assistant_respond_returns_tuple():
     reply, sid = result
     assert isinstance(reply, str)
     assert sid is None
+
 
 def test_assistant_format_history():
     """_format_history produces User/Assistant prefixed lines."""
@@ -110,6 +119,7 @@ def test_assistant_format_history():
     # Last message excluded (it's the "latest" in respond())
     assert "bye" not in out
 
+
 def test_store_session_id_roundtrip(tmp_path):
     """cli_session_id can be stored and retrieved via metadata."""
     sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
@@ -126,6 +136,7 @@ def test_store_session_id_roundtrip(tmp_path):
     # Overwrite works (upsert)
     s.set_metadata(cid, "cli_session_id", "new-session-456")
     assert s.get_metadata(cid, "cli_session_id") == "new-session-456"
+
 
 def test_pending_delivery_lifecycle(tmp_path):
     """Pending deliveries can be created, queried, updated, and cleared."""
@@ -156,6 +167,7 @@ def test_pending_delivery_lifecycle(tmp_path):
     s.update_delivery(did, status="delivered")
     assert s.get_pending_deliveries() == []
     assert s.clear_delivered() == 1
+
 
 def test_extract_attributed_text_basic():
     """_extract_attributed_text extracts text from a synthetic typedstream blob."""
@@ -325,6 +337,80 @@ def test_config_attachment_defaults():
     import config
     assert config.ENABLE_ATTACHMENTS is True
     assert config.ATTACHMENT_TIMEOUT == 30
+    assert config.MAX_VIDEO_FRAMES == 30
+
+
+def test_describe_video_empty_frames():
+    """describe_video returns empty string when given no frames."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from ai import ClaudeAssistant
+
+    a = ClaudeAssistant()
+    result = a.describe_video([], [], "unknown")
+    assert isinstance(result, str)
+    assert result == ""
+
+
+def test_describe_storyboard_panels_empty():
+    """describe_storyboard_panels returns empty list for no panels."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from ai import ClaudeAssistant
+
+    a = ClaudeAssistant()
+    result = a.describe_storyboard_panels([], "unknown")
+    assert result == []
+
+
+def test_storyboard_align_frames():
+    """Frame-to-speech alignment picks nearest frame by midpoint."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from storyboard import align_frames_to_segments
+
+    frames = [
+        {"path": "/tmp/f1.jpg", "time": 0.0},
+        {"path": "/tmp/f2.jpg", "time": 1.0},
+        {"path": "/tmp/f3.jpg", "time": 2.0},
+        {"path": "/tmp/f4.jpg", "time": 3.0},
+        {"path": "/tmp/f5.jpg", "time": 4.0},
+    ]
+    segments = [
+        {"text": "Hello there", "start": 0.0, "end": 0.6},   # midpoint 0.3 → f1
+        {"text": "How are you", "start": 2.8, "end": 3.5},    # midpoint 3.15 → f4
+    ]
+
+    panels = align_frames_to_segments(frames, segments)
+
+    # Should have speech panels + some silence panels
+    speech_panels = [p for p in panels if p["transcript"] != "[silence]"]
+    assert len(speech_panels) == 2
+    assert speech_panels[0]["frame"]["time"] == 0.0   # nearest to 0.3
+    assert speech_panels[1]["frame"]["time"] == 3.0   # nearest to 3.15
+
+    # All panels sorted by timestamp
+    times = [p["timestamp"] for p in panels]
+    assert times == sorted(times)
+
+
+def test_storyboard_align_no_segments():
+    """Alignment with no speech creates silence panels from frames."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from storyboard import align_frames_to_segments
+
+    frames = [
+        {"path": "/tmp/f1.jpg", "time": 0.0},
+        {"path": "/tmp/f2.jpg", "time": 1.0},
+        {"path": "/tmp/f3.jpg", "time": 2.0},
+    ]
+    panels = align_frames_to_segments(frames, [])
+    assert len(panels) > 0
+    assert all(p["transcript"] == "[silence]" for p in panels)
+
+
+def test_storyboard_align_empty():
+    """Alignment with no frames returns empty."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from storyboard import align_frames_to_segments
+    assert align_frames_to_segments([], []) == []
 
 
 def test_status_json_valid():
@@ -337,3 +423,155 @@ def test_status_json_valid():
         data = json.loads(status_path.read_text())
         assert "project" in data
         assert data["project"] == "InteroperBot"
+
+
+# --- Transport layer tests ---
+
+
+def test_transport_abc_requires_send():
+    """Transport ABC cannot be instantiated without send()."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from transport import Transport
+    import pytest
+    with pytest.raises(TypeError):
+        Transport()
+
+
+def test_message_attachment_dataclass():
+    """MessageAttachment constructs correctly."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from transport import MessageAttachment
+    att = MessageAttachment(
+        mime_type="image/jpeg",
+        filename="photo.jpg",
+        local_path="/tmp/photo.jpg",
+        size_bytes=1024,
+        media_type="image",
+    )
+    assert att.media_type == "image"
+    assert att.size_bytes == 1024
+    assert att.local_path == "/tmp/photo.jpg"
+
+
+def test_transport_incoming_message():
+    """Transport-level IncomingMessage constructs correctly."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from transport import IncomingMessage
+    from datetime import datetime, timezone
+    msg = IncomingMessage(
+        transport="test",
+        sender="+15551234567",
+        text="hello",
+        timestamp=datetime.now(timezone.utc),
+    )
+    assert msg.transport == "test"
+    assert msg.sender == "+15551234567"
+    assert msg.attachments == []
+
+
+def test_router_handle_message(tmp_path):
+    """MessageRouter processes a message through the full flow."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from core import MessageRouter
+    from transport import Transport, IncomingMessage
+    from store import SQLiteStore
+    from datetime import datetime, timezone
+
+    class MockTransport(Transport):
+        name = "mock"
+        sent = []
+        def send(self, recipient, text):
+            self.sent.append((recipient, text))
+            return True
+
+    class MockAssistant:
+        def respond(self, history, session_id=None):
+            return "mock reply", "session-123"
+
+    store = SQLiteStore(db_path=str(tmp_path / "test.db"))
+    router = MessageRouter(store, MockAssistant())
+    mock = MockTransport()
+    router.register(mock)
+
+    msg = IncomingMessage(
+        transport="mock",
+        sender="+15551234567",
+        text="hello",
+        timestamp=datetime.now(timezone.utc),
+    )
+    reply = router.handle_message(msg)
+    assert reply == "mock reply"
+    assert len(mock.sent) == 1
+    assert mock.sent[0] == ("+15551234567", "mock reply")
+
+
+def test_router_stores_messages(tmp_path):
+    """MessageRouter logs user and assistant messages in store."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from core import MessageRouter
+    from transport import Transport, IncomingMessage
+    from store import SQLiteStore
+    from datetime import datetime, timezone
+
+    class NoopTransport(Transport):
+        name = "noop"
+        def send(self, recipient, text):
+            return True
+
+    class MockAssistant:
+        def respond(self, history, session_id=None):
+            return "reply", None
+
+    store = SQLiteStore(db_path=str(tmp_path / "test.db"))
+    router = MessageRouter(store, MockAssistant())
+    router.register(NoopTransport())
+
+    msg = IncomingMessage(
+        transport="noop",
+        sender="test@example.com",
+        text="hi",
+        timestamp=datetime.now(timezone.utc),
+    )
+    router.handle_message(msg)
+
+    cid = store.get_or_create_contact("test@example.com")
+    history = store.get_history(cid)
+    assert len(history) == 2
+    assert history[0]["role"] == "user"
+    assert history[1]["role"] == "assistant"
+
+
+def test_config_whatsapp_defaults():
+    """WhatsApp config defaults are sensible."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    import config
+    assert config.WHATSAPP_ENABLED is False
+    assert config.WHATSAPP_BRIDGE_PORT == 3456
+    assert config.WEB_ENABLED is True
+    assert config.WEB_PORT == 8000
+
+
+def test_enrich_message_attachment_missing_file():
+    """enrich_message_attachment returns metadata-only for missing files."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from attachments import enrich_message_attachment
+    from transport import MessageAttachment
+    att = MessageAttachment(
+        mime_type="image/jpeg",
+        filename="photo.jpg",
+        local_path="/nonexistent/photo.jpg",
+        size_bytes=1024,
+        media_type="image",
+    )
+    desc = enrich_message_attachment(att, timeout=5)
+    assert "photo.jpg" in desc
+    assert "file unavailable" in desc
+
+
+def test_imessage_transport_is_transport():
+    """iMessageTransport implements Transport ABC."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from imessage import iMessageTransport
+    from transport import Transport
+    assert issubclass(iMessageTransport, Transport)
+    assert iMessageTransport.name == "imessage"

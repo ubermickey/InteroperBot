@@ -18,3 +18,7 @@ venv/
 # Project runtime
 status.json
 logs/
+
+# WhatsApp bridge
+helpers/wa-bridge/node_modules/
+helpers/wa-bridge/auth/
