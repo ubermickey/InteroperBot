@@ -36,3 +36,9 @@ WHATSAPP_ACCESS_TOKEN: str = os.getenv("WHATSAPP_ACCESS_TOKEN", "")
 WHATSAPP_PHONE_NUMBER_ID: str = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
 WHATSAPP_VERIFY_TOKEN: str = os.getenv("WHATSAPP_VERIFY_TOKEN", "interoperbot")
 WHATSAPP_WEBHOOK_PORT: int = int(os.getenv("WHATSAPP_WEBHOOK_PORT", "8443"))
+
+# WAHA (WhatsApp HTTP API) — self-hosted, API-key-free WhatsApp via Baileys
+WAHA_API_URL: str = os.getenv("WAHA_API_URL", "http://localhost:3000")
+WAHA_SESSION_NAME: str = os.getenv("WAHA_SESSION_NAME", "default")
+WAHA_WEBHOOK_PORT: int = int(os.getenv("WAHA_WEBHOOK_PORT", "8444"))
+WAHA_API_KEY: str = os.getenv("WAHA_API_KEY", "")

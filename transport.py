@@ -121,6 +121,10 @@ def _load_builtin_transports():
         import whatsapp  # noqa: F401 — registers "whatsapp"
     except Exception:
         logger.debug("WhatsApp transport not available")
+    try:
+        import waha  # noqa: F401 — registers "waha"
+    except Exception:
+        logger.debug("WAHA transport not available")
 
 
 def create_transports(names: str) -> list[MessageTransport]:

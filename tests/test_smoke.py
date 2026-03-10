@@ -15,7 +15,7 @@ def test_bot_help():
 
 def test_imports():
     """All modules import without error."""
-    for mod in ["config", "ai", "imessage", "store", "transport", "whatsapp"]:
+    for mod in ["config", "ai", "imessage", "store", "transport", "whatsapp", "waha"]:
         importlib.import_module(mod)
 
 def test_store_roundtrip(tmp_path):
@@ -197,6 +197,7 @@ def test_transport_registry():
     _load_builtin_transports()
     assert "imessage" in TRANSPORT_REGISTRY
     assert "whatsapp" in TRANSPORT_REGISTRY
+    assert "waha" in TRANSPORT_REGISTRY
 
 
 def test_create_transports_factory():
@@ -281,6 +282,126 @@ def test_whatsapp_webhook_parsing():
     assert msg.text == "Hello from WhatsApp!"
     assert msg.transport == "whatsapp"
     assert msg.timestamp.year == 2024
+
+
+def test_waha_transport_offline():
+    """WAHATransport can be instantiated without a running WAHA server."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from waha import WAHATransport
+
+    t = WAHATransport(api_url="http://localhost:3000", session_name="test")
+    assert t.name == "waha"
+    assert t.supports_delivery_tracking() is False
+    assert t.get_service_fallback_order() == ["waha"]
+
+    # send_message fails gracefully when WAHA is not running
+    assert t.send_message("+15551234567", "test") is False
+
+
+def test_waha_jid_conversion():
+    """JID <-> phone number conversion works correctly."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from waha import _jid_to_phone, _phone_to_jid
+
+    # JID to phone
+    assert _jid_to_phone("1234567890@c.us") == "+1234567890"
+    assert _jid_to_phone("+1234567890@c.us") == "+1234567890"
+
+    # Phone to JID
+    assert _phone_to_jid("+1234567890") == "1234567890@c.us"
+    assert _phone_to_jid("1234567890") == "1234567890@c.us"
+    assert _phone_to_jid("+1-234-567-890") == "1234567890@c.us"
+
+
+def test_waha_webhook_parsing():
+    """WAHA webhook handler correctly parses incoming message events."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from queue import Queue
+    from waha import WAHAWebhookHandler
+    from transport import IncomingMessage
+
+    # Create a mock WAHA webhook payload
+    payload = {
+        "event": "message",
+        "session": "default",
+        "payload": {
+            "id": "true_1234567890@c.us_ABCDEF",
+            "timestamp": 1704067200,  # 2024-01-01 00:00:00 UTC
+            "from": "1234567890@c.us",
+            "to": "0987654321@c.us",
+            "body": "Hello from WAHA!",
+            "fromMe": False,
+            "hasMedia": False,
+        },
+    }
+
+    queue = Queue()
+
+    class MockHandler(WAHAWebhookHandler):
+        def __init__(self):
+            self.server = type("Server", (), {"message_queue": queue})()
+
+    handler = MockHandler()
+    handler._process_webhook(payload)
+
+    assert not queue.empty()
+    msg = queue.get()
+    assert isinstance(msg, IncomingMessage)
+    assert msg.message_id == "true_1234567890@c.us_ABCDEF"
+    assert msg.chat_identifier == "+1234567890"
+    assert msg.text == "Hello from WAHA!"
+    assert msg.transport == "waha"
+    assert msg.timestamp.year == 2024
+
+
+def test_waha_webhook_skips_outgoing():
+    """WAHA webhook handler skips messages sent by us (fromMe=True)."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from queue import Queue
+    from waha import WAHAWebhookHandler
+
+    payload = {
+        "event": "message",
+        "session": "default",
+        "payload": {
+            "id": "outgoing_msg_123",
+            "timestamp": 1704067200,
+            "from": "0987654321@c.us",
+            "to": "1234567890@c.us",
+            "body": "This is my own message",
+            "fromMe": True,
+        },
+    }
+
+    queue = Queue()
+
+    class MockHandler(WAHAWebhookHandler):
+        def __init__(self):
+            self.server = type("Server", (), {"message_queue": queue})()
+
+    handler = MockHandler()
+    handler._process_webhook(payload)
+
+    assert queue.empty(), "Outgoing messages should be skipped"
+
+
+def test_waha_transport_registry():
+    """WAHA transport registers in the transport registry."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from transport import TRANSPORT_REGISTRY, _load_builtin_transports
+
+    _load_builtin_transports()
+    assert "waha" in TRANSPORT_REGISTRY
+
+
+def test_waha_create_transport():
+    """create_transports factory can instantiate WAHA transport."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from transport import create_transports
+
+    transports = create_transports("waha")
+    assert len(transports) == 1
+    assert transports[0].name == "waha"
 
 
 def test_imessage_transport_implements_abc():
