@@ -15,7 +15,7 @@ def test_bot_help():
 
 def test_imports():
     """All modules import without error."""
-    for mod in ["config", "ai", "imessage", "store"]:
+    for mod in ["config", "ai", "imessage", "store", "transport", "whatsapp"]:
         importlib.import_module(mod)
 
 def test_store_roundtrip(tmp_path):
@@ -167,3 +167,130 @@ def test_status_json_valid():
         data = json.loads(status_path.read_text())
         assert "project" in data
         assert data["project"] == "InteroperBot"
+
+
+# --- Transport abstraction tests ---
+
+def test_transport_abc():
+    """MessageTransport ABC has required abstract methods."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from transport import MessageTransport, IncomingMessage
+    import inspect
+
+    # Verify ABC can't be instantiated directly
+    try:
+        MessageTransport()
+        assert False, "Should not be able to instantiate ABC"
+    except TypeError:
+        pass
+
+    # Verify IncomingMessage dataclass fields
+    fields = {f.name for f in IncomingMessage.__dataclass_fields__.values()}
+    assert fields == {"message_id", "text", "chat_identifier", "timestamp", "transport"}
+
+
+def test_transport_registry():
+    """Built-in transports register correctly."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from transport import TRANSPORT_REGISTRY, _load_builtin_transports
+
+    _load_builtin_transports()
+    assert "imessage" in TRANSPORT_REGISTRY
+    assert "whatsapp" in TRANSPORT_REGISTRY
+
+
+def test_create_transports_factory():
+    """create_transports factory instantiates correct transport types."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from transport import create_transports
+
+    # Single transport
+    transports = create_transports("whatsapp")
+    assert len(transports) == 1
+    assert transports[0].name == "whatsapp"
+
+    # Multiple transports
+    transports = create_transports("imessage,whatsapp")
+    assert len(transports) == 2
+    names = {t.name for t in transports}
+    assert names == {"imessage", "whatsapp"}
+
+    # Unknown transport raises
+    try:
+        create_transports("telegram")
+        assert False, "Should raise ValueError for unknown transport"
+    except ValueError as e:
+        assert "telegram" in str(e)
+
+
+def test_whatsapp_transport_offline():
+    """WhatsAppTransport can be instantiated without API credentials."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from whatsapp import WhatsAppTransport
+
+    t = WhatsAppTransport(access_token="", phone_number_id="")
+    assert t.name == "whatsapp"
+    assert t.supports_delivery_tracking() is False
+    assert t.get_service_fallback_order() == ["whatsapp"]
+
+    # send_message fails gracefully without credentials
+    assert t.send_message("+15551234567", "test") is False
+
+
+def test_whatsapp_webhook_parsing():
+    """WhatsApp webhook handler correctly parses Meta webhook payloads."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from queue import Queue
+    from whatsapp import WhatsAppWebhookHandler
+    from transport import IncomingMessage
+
+    # Create a mock payload matching Meta's webhook format
+    payload = {
+        "entry": [{
+            "changes": [{
+                "value": {
+                    "messages": [{
+                        "id": "wamid.abc123",
+                        "from": "+15551234567",
+                        "timestamp": "1704067200",  # 2024-01-01 00:00:00 UTC
+                        "type": "text",
+                        "text": {"body": "Hello from WhatsApp!"},
+                    }]
+                }
+            }]
+        }]
+    }
+
+    # Create a handler instance and process the payload
+    queue = Queue()
+
+    # Use the internal _process_webhook method via a minimal mock
+    class MockHandler(WhatsAppWebhookHandler):
+        def __init__(self):
+            # Skip real HTTP init
+            self.server = type("Server", (), {"message_queue": queue, "verify_token": "test"})()
+
+    handler = MockHandler()
+    handler._process_webhook(payload)
+
+    assert not queue.empty()
+    msg = queue.get()
+    assert isinstance(msg, IncomingMessage)
+    assert msg.message_id == "wamid.abc123"
+    assert msg.chat_identifier == "+15551234567"
+    assert msg.text == "Hello from WhatsApp!"
+    assert msg.transport == "whatsapp"
+    assert msg.timestamp.year == 2024
+
+
+def test_imessage_transport_implements_abc():
+    """iMessageTransport properly implements MessageTransport ABC."""
+    sys.path.insert(0, "/Users/mikeudem/Projects/InteroperBot")
+    from imessage import iMessageTransport
+    from transport import MessageTransport
+
+    assert issubclass(iMessageTransport, MessageTransport)
+    t = iMessageTransport.__new__(iMessageTransport)
+    assert t.name == "imessage"
+    assert t.supports_delivery_tracking() is True
+    assert t.get_service_fallback_order() == ["iMessage", "SMS"]

@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""InteroperBot — iMessage-to-Claude bot with persistent conversation storage.
+"""InteroperBot — Multi-transport AI bot with persistent conversation storage.
+
+Supports iMessage, WhatsApp, and any transport implementing MessageTransport ABC.
 
 Usage:
-    python bot.py              # Run the bot
-    python bot.py --dry-run    # Print responses instead of sending
-    python bot.py --reset      # Clear all conversation history and exit
-    python bot.py --status     # Output JSON status for dashboard
+    python bot.py                          # Run with default transport (iMessage)
+    python bot.py --transport whatsapp     # Run with WhatsApp transport
+    python bot.py --transport all          # Run all configured transports
+    python bot.py --dry-run               # Print responses instead of sending
+    python bot.py --reset                 # Clear all conversation history and exit
+    python bot.py --status                # Output JSON status for dashboard
 """
 
 import argparse
@@ -17,11 +21,12 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import config
 from ai import ClaudeAssistant
-from imessage import iMessageTransport, SERVICE_FALLBACK
 from store import SQLiteStore
+from transport import MessageTransport, create_transports
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,11 +44,16 @@ def handle_signal(signum, frame):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="InteroperBot iMessage bot")
+    parser = argparse.ArgumentParser(description="InteroperBot multi-transport bot")
+    parser.add_argument(
+        "--transport",
+        default=config.TRANSPORT,
+        help='Transport(s) to use: "imessage", "whatsapp", "all", or comma-separated (default: %(default)s)',
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Print replies to stdout instead of sending via iMessage",
+        help="Print replies to stdout instead of sending",
     )
     parser.add_argument(
         "--reset",
@@ -58,12 +68,13 @@ def parse_args():
     return parser.parse_args()
 
 
-def get_status() -> dict:
+def get_status(active_transports: list[str] | None = None) -> dict:
     """Gather current system status for dashboard consumption."""
     status = {
         "project": "InteroperBot",
-        "version": "0.1.0",
+        "version": "0.2.0",
         "status": "active",
+        "transports": active_transports or [],
         "uptime_since": None,
         "last_message_at": None,
         "messages_today": 0,
@@ -149,90 +160,121 @@ def main():
         system_prompt=config.SYSTEM_PROMPT,
         timeout=config.CLI_TIMEOUT,
     )
-    transport = iMessageTransport()
+
+    # Instantiate transports via the registry
+    try:
+        transports = create_transports(args.transport)
+    except ValueError as e:
+        logger.error("%s", e)
+        sys.exit(1)
+
+    if not transports:
+        logger.error("No transports configured. Set TRANSPORT env var or use --transport flag.")
+        sys.exit(1)
+
+    transport_names = [t.name for t in transports]
+    logger.info("Active transports: %s", ", ".join(transport_names))
 
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
 
-    last_rowid = transport.get_latest_rowid()
-    last_outgoing_rowid = transport.get_latest_outgoing_rowid()
-    logger.info("Bot started. Watching for new messages (after ROWID %d)...", last_rowid)
+    # Initialize per-transport polling state
+    transport_states: dict[str, Any] = {}
+    for t in transports:
+        transport_states[t.name] = t.get_initial_state()
+        logger.info("Transport %s initialized.", t.name)
 
     while not shutdown:
-        # --- Phase 1: Process incoming messages ---
-        incoming = transport.poll_new_messages(last_rowid)
+        # --- Phase 1: Process incoming messages from all transports ---
+        for transport in transports:
+            state = transport_states[transport.name]
+            incoming, new_state = transport.poll_new_messages(state)
+            transport_states[transport.name] = new_state
 
-        for msg in incoming:
-            last_rowid = max(last_rowid, msg.rowid)
+            for msg in incoming:
+                # Filter by allowed contacts if configured
+                if config.ALLOWED_CONTACTS and msg.chat_identifier not in config.ALLOWED_CONTACTS:
+                    logger.debug("Skipping message from %s (not in allowed list)", msg.chat_identifier)
+                    continue
 
-            # Filter by allowed contacts if configured
-            if config.ALLOWED_CONTACTS and msg.chat_identifier not in config.ALLOWED_CONTACTS:
-                logger.debug("Skipping message from %s (not in allowed list)", msg.chat_identifier)
-                continue
+                logger.info("[%s] Message from %s: %s", transport.name, msg.chat_identifier, msg.text[:80])
 
-            logger.info("Message from %s: %s", msg.chat_identifier, msg.text[:80])
+                # Get or create the contact in our store
+                contact_id = store.get_or_create_contact(msg.chat_identifier)
 
-            # Get or create the contact in our store
-            contact_id = store.get_or_create_contact(msg.chat_identifier)
+                # Load CLI session for this contact (if any)
+                session_id = store.get_metadata(contact_id, "cli_session_id")
 
-            # Load CLI session for this contact (if any)
-            session_id = store.get_metadata(contact_id, "cli_session_id")
-
-            # Log the incoming message
-            store.log_message(
-                contact_id=contact_id,
-                role="user",
-                content=msg.text,
-                timestamp=msg.timestamp,
-            )
-
-            # Get Claude's response (history is fallback-only now)
-            history = store.get_history(contact_id, limit=config.MAX_HISTORY)
-            reply, new_session_id = assistant.respond(history, session_id=session_id)
-
-            # Persist the CLI session ID for next turn
-            if new_session_id:
-                store.set_metadata(contact_id, "cli_session_id", new_session_id)
-
-            # Log the reply
-            store.log_message(
-                contact_id=contact_id,
-                role="assistant",
-                content=reply,
-            )
-
-            # Send or print the reply
-            if args.dry_run:
-                print(f"[{msg.chat_identifier}] {reply}")
-            else:
-                transport.send_message(msg.chat_identifier, reply)
-                store.add_pending_delivery(
-                    msg.chat_identifier, reply, last_outgoing_rowid,
+                # Log the incoming message
+                store.log_message(
+                    contact_id=contact_id,
+                    role="user",
+                    content=msg.text,
+                    timestamp=msg.timestamp,
+                    metadata={"transport": transport.name},
                 )
-                last_outgoing_rowid = transport.get_latest_outgoing_rowid()
+
+                # Get Claude's response
+                history = store.get_history(contact_id, limit=config.MAX_HISTORY)
+                reply, new_session_id = assistant.respond(history, session_id=session_id)
+
+                # Persist the CLI session ID for next turn
+                if new_session_id:
+                    store.set_metadata(contact_id, "cli_session_id", new_session_id)
+
+                # Log the reply
+                store.log_message(
+                    contact_id=contact_id,
+                    role="assistant",
+                    content=reply,
+                    metadata={"transport": transport.name},
+                )
+
+                # Send or print the reply
+                if args.dry_run:
+                    print(f"[{transport.name}:{msg.chat_identifier}] {reply}")
+                else:
+                    transport.send_message(msg.chat_identifier, reply)
+                    store.add_pending_delivery(
+                        msg.chat_identifier, reply,
+                    )
 
         # --- Phase 2: Check delivery status and retry failures ---
         if not args.dry_run:
-            _check_and_retry_deliveries(store, transport)
+            for transport in transports:
+                if transport.supports_delivery_tracking():
+                    _check_and_retry_deliveries(
+                        store, transport, transport_states[transport.name],
+                    )
 
         time.sleep(config.POLL_INTERVAL)
+
+    # Graceful shutdown — stop any webhook servers etc.
+    for transport in transports:
+        if hasattr(transport, "stop_webhook"):
+            transport.stop_webhook()
 
     logger.info("Bot stopped.")
 
 
-def _check_and_retry_deliveries(store: SQLiteStore, transport: iMessageTransport):
-    """Check pending deliveries against chat.db and retry failures."""
+def _check_and_retry_deliveries(
+    store: SQLiteStore,
+    transport: MessageTransport,
+    state: Any,
+):
+    """Check pending deliveries and retry failures using transport's fallback."""
     pending = store.get_pending_deliveries()
     if not pending:
         return
 
+    fallback_order = transport.get_service_fallback_order()
+
     for delivery in pending:
-        outgoing_rowid = delivery["outgoing_rowid"] or 0
-        failures = transport.check_failed_deliveries(outgoing_rowid)
+        failures = transport.check_failed_deliveries(state)
 
         # Check if any failure matches this delivery's chat_identifier
         failed = any(
-            f.chat_identifier == delivery["chat_identifier"] for f in failures
+            f["chat_identifier"] == delivery["chat_identifier"] for f in failures
         )
 
         if not failed and delivery["attempts"] >= 2:
@@ -250,9 +292,9 @@ def _check_and_retry_deliveries(store: SQLiteStore, transport: iMessageTransport
         services_tried = delivery["services_tried"]
         tried_list = [s.strip() for s in services_tried.split(",")]
 
-        # Find next untried service
+        # Find next untried service in fallback order
         next_service = None
-        for svc in SERVICE_FALLBACK:
+        for svc in fallback_order:
             if svc not in tried_list:
                 next_service = svc
                 break
@@ -267,12 +309,10 @@ def _check_and_retry_deliveries(store: SQLiteStore, transport: iMessageTransport
                 delivery["chat_identifier"], delivery["content"],
                 service_type=next_service,
             )
-            new_outgoing = transport.get_latest_outgoing_rowid()
             store.update_delivery(
                 delivery["id"],
                 services_tried=services_tried + "," + next_service,
                 attempts=attempts + 1,
-                outgoing_rowid=new_outgoing,
             )
         else:
             logger.error(

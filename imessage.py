@@ -11,7 +11,9 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
+
+from transport import MessageTransport, IncomingMessage, register_transport
 
 logger = logging.getLogger(__name__)
 
@@ -20,14 +22,6 @@ APPLE_EPOCH_OFFSET = 978307200  # seconds between 1970-01-01 and 2001-01-01
 
 # Service fallback order
 SERVICE_FALLBACK = ["iMessage", "SMS"]
-
-
-@dataclass
-class IncomingMessage:
-    rowid: int
-    text: str
-    chat_identifier: str  # phone number or email
-    timestamp: datetime
 
 
 @dataclass
@@ -47,7 +41,8 @@ def _apple_date_to_datetime(apple_date: int) -> datetime:
     return datetime.fromtimestamp(unix_ts, tz=timezone.utc)
 
 
-class iMessageTransport:
+@register_transport("imessage")
+class iMessageTransport(MessageTransport):
     """Reads from and writes to iMessage via macOS APIs."""
 
     MESSAGES_DB = Path.home() / "Library" / "Messages" / "chat.db"
@@ -55,10 +50,21 @@ class iMessageTransport:
     def __init__(self, db_path: Optional[str] = None):
         self.db_path = db_path or str(self.MESSAGES_DB)
 
+    @property
+    def name(self) -> str:
+        return "imessage"
+
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
         return conn
+
+    def get_initial_state(self) -> dict:
+        """Return initial state with latest rowids for polling."""
+        return {
+            "last_rowid": self.get_latest_rowid(),
+            "last_outgoing_rowid": self.get_latest_outgoing_rowid(),
+        }
 
     def get_latest_rowid(self) -> int:
         """Get the current max ROWID so we only process new messages."""
@@ -74,8 +80,14 @@ class iMessageTransport:
             ).fetchone()
             return row["max_id"] or 0
 
-    def poll_new_messages(self, last_rowid: int) -> list[IncomingMessage]:
+    def poll_new_messages(self, since_state: Any) -> tuple[list[IncomingMessage], Any]:
         """Fetch all incoming messages with ROWID > last_rowid."""
+        if isinstance(since_state, dict):
+            last_rowid = since_state.get("last_rowid", 0)
+        else:
+            # Backward compat: accept raw int
+            last_rowid = int(since_state)
+
         query = """
             SELECT m.ROWID, m.text, m.date, c.chat_identifier
             FROM message m
@@ -85,24 +97,39 @@ class iMessageTransport:
             ORDER BY m.ROWID ASC
         """
         messages = []
+        new_last_rowid = last_rowid
         try:
             with self._connect() as conn:
                 rows = conn.execute(query, (last_rowid,)).fetchall()
                 for row in rows:
+                    new_last_rowid = max(new_last_rowid, row["ROWID"])
                     messages.append(
                         IncomingMessage(
-                            rowid=row["ROWID"],
+                            message_id=str(row["ROWID"]),
                             text=row["text"],
                             chat_identifier=row["chat_identifier"],
                             timestamp=_apple_date_to_datetime(row["date"]),
+                            transport="imessage",
                         )
                     )
         except sqlite3.OperationalError as e:
             logger.error("Failed to read Messages DB: %s", e)
-        return messages
 
-    def check_failed_deliveries(self, since_rowid: int) -> list[FailedDelivery]:
+        new_state = {"last_rowid": new_last_rowid}
+        if isinstance(since_state, dict) and "last_outgoing_rowid" in since_state:
+            new_state["last_outgoing_rowid"] = since_state["last_outgoing_rowid"]
+        return messages, new_state
+
+    def supports_delivery_tracking(self) -> bool:
+        return True
+
+    def check_failed_deliveries(self, since_state: Any) -> list[dict]:
         """Check chat.db for outgoing messages with delivery errors since rowid."""
+        if isinstance(since_state, dict):
+            since_rowid = since_state.get("last_outgoing_rowid", 0)
+        else:
+            since_rowid = int(since_state)
+
         query = """
             SELECT m.ROWID, c.chat_identifier, m.error
             FROM message m
@@ -116,26 +143,25 @@ class iMessageTransport:
             with self._connect() as conn:
                 rows = conn.execute(query, (since_rowid,)).fetchall()
                 for row in rows:
-                    failures.append(
-                        FailedDelivery(
-                            rowid=row["ROWID"],
-                            chat_identifier=row["chat_identifier"],
-                            error=row["error"],
-                        )
-                    )
+                    failures.append({
+                        "rowid": row["ROWID"],
+                        "chat_identifier": row["chat_identifier"],
+                        "error": row["error"],
+                    })
         except sqlite3.OperationalError as e:
             logger.error("Failed to check delivery status: %s", e)
         return failures
 
-    @staticmethod
-    def send_message(
-        chat_identifier: str, text: str, service_type: str = "iMessage",
-    ) -> bool:
+    def get_service_fallback_order(self) -> list[str]:
+        return SERVICE_FALLBACK
+
+    def send_message(self, recipient: str, text: str, **kwargs) -> bool:
         """Send a message via AppleScript using the specified service type."""
+        service_type = kwargs.get("service_type", "iMessage")
         escaped = text.replace("\\", "\\\\").replace('"', '\\"')
         script = (
             f'tell application "Messages" to send "{escaped}" '
-            f'to buddy "{chat_identifier}" of '
+            f'to buddy "{recipient}" of '
             f'(service 1 whose service type is {service_type})'
         )
         try:
@@ -145,14 +171,14 @@ class iMessageTransport:
                 capture_output=True,
                 timeout=30,
             )
-            logger.info("Sent reply to %s via %s", chat_identifier, service_type)
+            logger.info("Sent reply to %s via %s", recipient, service_type)
             return True
         except subprocess.CalledProcessError as e:
             logger.error(
                 "AppleScript failed for %s via %s: %s",
-                chat_identifier, service_type, e.stderr.decode(),
+                recipient, service_type, e.stderr.decode(),
             )
             return False
         except subprocess.TimeoutExpired:
-            logger.error("AppleScript timed out for %s", chat_identifier)
+            logger.error("AppleScript timed out for %s", recipient)
             return False
