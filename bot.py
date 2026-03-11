@@ -53,8 +53,11 @@ def parse_args():
     )
     parser.add_argument(
         "--setup-whatsapp",
-        action="store_true",
-        help="Bootstrap WhatsApp bridge (install deps, scan QR code)",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="PHONE",
+        help="Bootstrap WhatsApp bridge. Optional phone number for pairing code (e.g. +12135551234)",
     )
     return parser.parse_args()
 
@@ -136,9 +139,9 @@ def main():
         print(json.dumps(status, indent=2))
         return
 
-    if args.setup_whatsapp:
+    if args.setup_whatsapp is not None:
         from whatsapp import setup_whatsapp
-        setup_whatsapp()
+        setup_whatsapp(phone_number=args.setup_whatsapp)
         return
 
     store = SQLiteStore(db_path=config.DB_PATH)
@@ -167,17 +170,30 @@ def main():
 
     if config.WEB_ENABLED:
         from web import WebTransport
+        import socket
         import uvicorn
 
-        web = WebTransport(router)
-        router.register(web)
-        threading.Thread(
-            target=uvicorn.run,
-            args=(web.app,),
-            kwargs={"host": "127.0.0.1", "port": config.WEB_PORT, "log_level": "info"},
-            daemon=True,
-        ).start()
-        logger.info("Web UI at http://127.0.0.1:%d", config.WEB_PORT)
+        # Pre-check port availability — avoids silent thread death
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.bind(("127.0.0.1", config.WEB_PORT))
+            sock.close()
+        except OSError:
+            logger.warning(
+                "Port %d already in use — web UI disabled. "
+                "Kill the other process or set WEB_PORT in .env",
+                config.WEB_PORT,
+            )
+        else:
+            web = WebTransport(router)
+            router.register(web)
+            threading.Thread(
+                target=uvicorn.run,
+                args=(web.app,),
+                kwargs={"host": "127.0.0.1", "port": config.WEB_PORT, "log_level": "info"},
+                daemon=True,
+            ).start()
+            logger.info("Web UI at http://127.0.0.1:%d", config.WEB_PORT)
 
     # --- Signal handling ---
 

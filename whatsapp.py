@@ -120,8 +120,13 @@ class WhatsAppTransport(Transport):
             logger.error("Failed to parse bridge message: %s", e)
 
 
-def setup_whatsapp() -> None:
-    """Automated bridge bootstrap: check Node, scaffold, npm install, QR scan."""
+def setup_whatsapp(phone_number: str = "") -> None:
+    """Automated bridge bootstrap: check Node, npm install, authenticate.
+
+    Args:
+        phone_number: Optional phone number for pairing code auth (e.g. "+12135551234").
+                      If empty, uses QR code scanning instead.
+    """
     # 1. Check Node.js
     try:
         result = subprocess.run(
@@ -130,17 +135,14 @@ def setup_whatsapp() -> None:
         )
         if result.returncode != 0:
             raise FileNotFoundError
-        logger.info("Node.js %s found", result.stdout.strip())
+        print(f"Node.js {result.stdout.strip()} found")
     except (FileNotFoundError, subprocess.TimeoutExpired):
         print("Node.js required. Install: brew install node")
         return
 
-    # 2. Scaffold bridge files if missing
+    # 2. Verify bridge files exist
     BRIDGE_DIR.mkdir(parents=True, exist_ok=True)
-    package_json = BRIDGE_DIR / "package.json"
-    index_js = BRIDGE_DIR / "index.js"
-
-    if not package_json.exists() or not index_js.exists():
+    if not (BRIDGE_DIR / "package.json").exists() or not (BRIDGE_DIR / "index.js").exists():
         print("Bridge files should exist at helpers/wa-bridge/")
         print("If missing, check the repository or re-clone.")
         return
@@ -150,14 +152,30 @@ def setup_whatsapp() -> None:
         print("Installing bridge dependencies...")
         subprocess.run(["npm", "install"], cwd=str(BRIDGE_DIR), check=True)
 
-    # 4. Start bridge for QR scan
-    print("\nStarting bridge — scan the QR code with WhatsApp:")
-    print("  WhatsApp → Settings → Linked Devices → Link a Device")
+    # 4. Clean stale auth for fresh setup
+    auth_dir = BRIDGE_DIR / "auth"
+    if auth_dir.exists():
+        import shutil
+        shutil.rmtree(auth_dir)
+    auth_dir.mkdir(parents=True, exist_ok=True)
+
+    # 5. Start bridge for authentication
+    env = dict(subprocess.os.environ)
+    if phone_number:
+        env["WA_PHONE_NUMBER"] = phone_number
+        print(f"\nStarting bridge — pairing code mode for {phone_number}")
+        print("  A code will appear. Enter it in:")
+        print("  WhatsApp → Settings → Linked Devices → Link with Phone Number")
+    else:
+        print("\nStarting bridge — QR code mode")
+        print("  Scan the QR code with WhatsApp:")
+        print("  WhatsApp → Settings → Linked Devices → Link a Device")
     print("  Press Ctrl+C when connected.\n")
 
     proc = subprocess.Popen(
         ["node", str(BRIDGE_DIR / "index.js")],
         cwd=str(BRIDGE_DIR),
+        env=env,
     )
     try:
         proc.wait()

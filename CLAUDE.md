@@ -97,3 +97,16 @@ Tests are in `tests/test_smoke.py` — all run offline with no API key, no Messa
 - Claude CLI installed and authenticated (`npm install -g @anthropic-ai/claude-code`)
 - Terminal granted Full Disk Access (System Settings > Privacy & Security)
 - Node.js ≥18 for WhatsApp only (`brew install node`)
+
+## Infrastructure
+- **Port**: 8001 (configured in AppDevDefault/server_registry.json)
+- **Server**: `WEB_PORT=8001 python bot.py --host 0.0.0.0` (FastAPI)
+- **Health**: GET /
+- **VPN**: http://macbook-air-1:8001
+- **PM Dashboard**: http://macbook-air-1:3000
+
+## Portfolio Context
+This project is part of Michael's portfolio managed by [AppDevDefault](../AppDevDefault/CLAUDE.md).
+- Server registry: `AppDevDefault/server_registry.json`
+- Dashboard: http://macbook-air-1:3000
+- All projects: see root [CLAUDE.md](../CLAUDE.md)
