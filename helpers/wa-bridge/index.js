@@ -44,6 +44,7 @@ async function startBridge() {
         auth: state,
         logger,
         browser: Browsers.macOS('Safari'),
+        version: [2, 3000, 1034074495],
     });
 
     sock.ev.on('creds.update', saveCreds);
